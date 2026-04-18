@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Rocket, FlaskConical, Zap, Trash2 } from "lucide-react";
+import { Zap, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 
@@ -16,11 +16,9 @@ interface Props {
 /**
  * Top bar inside a server tab — the project's deploy controls.
  *
- * Three actions:
- *   - Sync (SFTP)     : native-Rust smart sync, the default. No rsync needed.
- *   - Sync + delete   : same, but also removes remote-only files.
- *   - Deploy (rsync)  : advanced mode. Requires rsync on PATH / bundled.
- *   - Dry run (rsync) : rsync --dry-run preview.
+ * Two actions, both native-Rust SFTP sync (no external rsync binary):
+ *   - Sync           : upload every new or changed file.
+ *   - Sync + delete  : same, plus remove remote files that don't exist locally.
  */
 export function DeployPanel({ projectId, projectName, sessionId }: Props) {
   const [running, setRunning] = useState(false);
@@ -70,40 +68,6 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
     }
   }
 
-  async function rsync(dryRun: boolean) {
-    if (!projectId || running) return;
-
-    if (!dryRun) {
-      const ok = await confirm({
-        title: "Deploy with rsync?",
-        description: (
-          <div className="space-y-1.5">
-            <div>
-              Requires <code className="font-mono">rsync</code> on the
-              system (or bundled). If <code className="font-mono">--delete</code>{" "}
-              is in the project's rsync flags, remote-only files will be
-              permanently removed.
-            </div>
-          </div>
-        ),
-        confirmText: "Deploy now",
-        danger: true,
-      });
-      if (!ok) return;
-    }
-
-    setRunning(true);
-    const id = toast.loading(`rsync ${dryRun ? "dry-run" : "deploy"}…`);
-    try {
-      const code = await api.deployRsync(projectId, dryRun);
-      toast.success(`rsync finished (exit ${code})`, { id });
-    } catch (e) {
-      toast.error(`${e}`, { id });
-    } finally {
-      setRunning(false);
-    }
-  }
-
   if (!projectId) {
     return (
       <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
@@ -116,52 +80,29 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
     <motion.div
       initial={{ opacity: 0, y: -4 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex flex-wrap items-center gap-2 border-b bg-muted/30 px-3 py-2"
+      className="flex flex-wrap items-center gap-1.5 border-b bg-muted/30 px-3 py-1.5"
     >
       <span className="text-xs font-medium">{projectName}</span>
       <div className="flex-1" />
 
       <Button
-        size="sm"
+        size="xs"
         disabled={running}
         onClick={() => syncSftp(false)}
         title="Upload new/changed files via SFTP"
       >
-        <Zap className="mr-1.5 h-3.5 w-3.5" />
+        <Zap className="mr-1 h-3 w-3" />
         Sync
       </Button>
       <Button
-        size="sm"
+        size="xs"
         variant="destructive"
         disabled={running}
         onClick={() => syncSftp(true)}
         title="Sync and delete remote files that don't exist locally"
       >
-        <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+        <Trash2 className="mr-1 h-3 w-3" />
         Sync + delete
-      </Button>
-
-      <div className="mx-2 h-5 w-px bg-border" />
-
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={running}
-        onClick={() => rsync(true)}
-        title="Preview with rsync --dry-run"
-      >
-        <FlaskConical className="mr-1.5 h-3.5 w-3.5" />
-        Dry run (rsync)
-      </Button>
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={running}
-        onClick={() => rsync(false)}
-        title="Run rsync (requires rsync binary)"
-      >
-        <Rocket className="mr-1.5 h-3.5 w-3.5" />
-        rsync
       </Button>
     </motion.div>
   );

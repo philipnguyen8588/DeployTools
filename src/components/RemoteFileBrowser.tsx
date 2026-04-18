@@ -8,7 +8,6 @@ import {
   Trash2,
   Upload,
   Download,
-  ChevronRight,
   GitCompare,
   Edit3,
   Copy,
@@ -269,66 +268,43 @@ export function RemoteFileBrowser({
   return (
     <div className="flex h-full flex-col">
       {/* toolbar */}
-      <div className="flex items-center gap-1 border-b bg-muted/30 p-1.5">
-        <Button size="icon" variant="ghost" onClick={cdUp} title="Up">
-          <ArrowUp className="h-4 w-4" />
+      <div className="flex items-center gap-1 border-b bg-muted/30 p-1">
+        <Button size="icon-sm" variant="ghost" onClick={cdUp} title="Up">
+          <ArrowUp className="h-3.5 w-3.5" />
         </Button>
-        <Button size="icon" variant="ghost" onClick={refresh} title="Refresh">
-          <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
+        <Button size="icon-sm" variant="ghost" onClick={refresh} title="Refresh">
+          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
         <Input
           value={path}
           onChange={(e) => onPathChange(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && refresh()}
-          className="h-7 flex-1 font-mono text-xs"
+          className="h-6 flex-1 font-mono text-xs"
         />
-        <Button size="icon" variant="ghost" onClick={mkdir} title="New folder">
-          <FolderPlus className="h-4 w-4" />
+        <Button size="icon-sm" variant="ghost" onClick={mkdir} title="New folder">
+          <FolderPlus className="h-3.5 w-3.5" />
         </Button>
-        <Button size="icon" variant="ghost" onClick={uploadFile} title="Upload">
-          <Upload className="h-4 w-4" />
+        <Button size="icon-sm" variant="ghost" onClick={uploadFile} title="Upload">
+          <Upload className="h-3.5 w-3.5" />
         </Button>
         <Button
-          size="icon"
+          size="icon-sm"
           variant="ghost"
           onClick={() => selection && downloadEntry(selection)}
           title="Download"
           disabled={!selection || selection.is_dir}
         >
-          <Download className="h-4 w-4" />
+          <Download className="h-3.5 w-3.5" />
         </Button>
         <Button
-          size="icon"
+          size="icon-sm"
           variant="ghost"
           onClick={() => selection && removeEntry(selection)}
           title="Delete"
           disabled={!selection}
         >
-          <Trash2 className="h-4 w-4 text-destructive" />
+          <Trash2 className="h-3.5 w-3.5 text-destructive" />
         </Button>
-      </div>
-
-      {/* breadcrumb */}
-      <div className="flex items-center gap-1 overflow-x-auto border-b px-2 py-1 text-xs text-muted-foreground">
-        {path.split("/").filter(Boolean).length === 0 ? (
-          <span>/</span>
-        ) : (
-          <>
-            <button onClick={() => onPathChange("/")}>/</button>
-            {path
-              .split("/")
-              .filter(Boolean)
-              .map((seg, i, arr) => {
-                const p = "/" + arr.slice(0, i + 1).join("/");
-                return (
-                  <span key={p} className="flex items-center gap-1">
-                    <ChevronRight className="h-3 w-3" />
-                    <button onClick={() => onPathChange(p)}>{seg}</button>
-                  </span>
-                );
-              })}
-          </>
-        )}
       </div>
 
       {/* list */}

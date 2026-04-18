@@ -21,8 +21,13 @@ const buttonVariants = cva(
       size: {
         default: "h-9 px-4 py-2",
         sm: "h-8 rounded-md px-3 text-xs",
+        // Compact sizes used by toolbars (file browser, docker/services
+        // headers, deploy bar). "xs" keeps text labels; "icon-sm" is the
+        // square counterpart for icon-only buttons.
+        xs: "h-7 rounded px-2 text-[11px]",
         lg: "h-10 rounded-md px-8",
         icon: "h-9 w-9",
+        "icon-sm": "h-7 w-7 rounded",
       },
     },
     defaultVariants: {

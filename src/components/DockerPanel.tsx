@@ -304,20 +304,20 @@ export function DockerPanel({ sessionId, projectId }: Props) {
           project-wide commands (`up all`, `down`, `restart all`, …)
           were removed because a single misclick can nuke running
           services. Use the per-service buttons. */}
-      <div className="flex items-center gap-2 border-b bg-muted/30 p-1.5">
-        <Container className="h-4 w-4 text-primary" />
+      <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5">
+        <Container className="h-3.5 w-3.5 text-primary" />
         <span className="text-xs font-medium">Docker Compose</span>
         <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
           {rows.length} services
         </span>
         <div className="flex-1" />
         <div className="relative">
-          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Filter…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="h-7 w-56 pl-7 text-xs"
+            className="h-6 w-40 pl-6 text-xs"
           />
         </div>
         <span
@@ -326,7 +326,7 @@ export function DockerPanel({ sessionId, projectId }: Props) {
         >
           {caps?.compose_version ?? ""}
         </span>
-        <Button size="icon" variant="ghost" onClick={refresh} disabled={busy}>
+        <Button size="icon-sm" variant="ghost" onClick={refresh} disabled={busy}>
           <RefreshCcw className={cn("h-3.5 w-3.5", busy && "animate-spin")} />
         </Button>
       </div>

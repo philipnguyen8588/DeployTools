@@ -152,26 +152,26 @@ export function LocalFileBrowser({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-1 border-b bg-muted/30 p-1.5">
-        <Button size="icon" variant="ghost" onClick={cdUp} title="Up">
-          <ArrowUp className="h-4 w-4" />
+      <div className="flex items-center gap-1 border-b bg-muted/30 p-1">
+        <Button size="icon-sm" variant="ghost" onClick={cdUp} title="Up">
+          <ArrowUp className="h-3.5 w-3.5" />
         </Button>
-        <Button size="icon" variant="ghost" onClick={refresh} title="Refresh">
-          <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
+        <Button size="icon-sm" variant="ghost" onClick={refresh} title="Refresh">
+          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
         <Input
           value={relativePath || "/"}
           readOnly
-          className="h-7 flex-1 font-mono text-xs"
+          className="h-6 flex-1 font-mono text-xs"
         />
         <Button
-          size="icon"
+          size="icon-sm"
           variant="ghost"
           onClick={() => selection && uploadEntry(selection)}
           title={`Upload to ${mirrorRemote}`}
           disabled={!selection}
         >
-          <Upload className="h-4 w-4" />
+          <Upload className="h-3.5 w-3.5" />
         </Button>
       </div>
 
