@@ -164,7 +164,7 @@ export function ServicePanel({ sessionId }: Props) {
               <th className="px-3 py-1.5 text-left font-medium">
                 Description
               </th>
-              <th className="w-64 px-3 py-1.5 text-right font-medium">
+              <th className="w-[280px] px-3 py-1.5 text-right font-medium">
                 Actions
               </th>
             </tr>
@@ -187,8 +187,8 @@ export function ServicePanel({ sessionId }: Props) {
                 <td className="max-w-[28ch] truncate px-3 py-1.5 text-muted-foreground">
                   {s.description}
                 </td>
-                <td className="px-3 py-1.5 text-right">
-                  <div className="inline-flex flex-wrap justify-end gap-1">
+                <td className="whitespace-nowrap px-3 py-1.5 text-right">
+                  <div className="inline-flex items-center justify-end gap-1">
                     <Button
                       size="sm"
                       variant="outline"

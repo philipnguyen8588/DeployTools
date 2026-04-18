@@ -2,15 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Container,
   ArrowUp,
-  ArrowDown,
   RefreshCcw,
   Hammer,
   Play,
   ScrollText,
-  StopCircle,
   TerminalSquare,
   AlertTriangle,
-  Download,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -22,6 +20,7 @@ import type {
   SessionCapabilities,
 } from "@/lib/types";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "./ConfirmDialog";
 import { useProjects } from "@/stores/projects";
@@ -41,6 +40,7 @@ export function DockerPanel({ sessionId, projectId }: Props) {
   const [statuses, setStatuses] = useState<ServiceStatus[]>([]);
   const [caps, setCaps] = useState<SessionCapabilities | null>(null);
   const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState("");
   const confirm = useConfirm();
   const project = useProjects((s) =>
     s.projects.find((p) => p.id === projectId),
@@ -85,11 +85,33 @@ export function DockerPanel({ sessionId, projectId }: Props) {
   const rows = useMemo(() => {
     if (!info) return [];
     const byName = new Map(statuses.map((s) => [s.service, s]));
-    return info.services.map((svc) => ({
+    const all = info.services.map((svc) => ({
       svc,
       status: byName.get(svc.name),
     }));
-  }, [info, statuses]);
+    // Sort: running first → other-state → not-created/one-off → alpha.
+    const rank = (r: (typeof all)[number]) => {
+      if (r.status?.state === "running") return 0;
+      if (r.status && r.status.state !== "running") return 1;
+      if (r.svc.is_oneoff) return 3;
+      return 2;
+    };
+    all.sort((a, b) => {
+      const ra = rank(a);
+      const rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      return a.svc.name.localeCompare(b.svc.name);
+    });
+
+    const q = filter.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter(
+      (r) =>
+        r.svc.name.toLowerCase().includes(q) ||
+        (r.svc.image?.toLowerCase().includes(q) ?? false) ||
+        (r.status?.state.toLowerCase().includes(q) ?? false),
+    );
+  }, [info, statuses, filter]);
 
   async function refresh() {
     setBusy(true);
@@ -278,54 +300,30 @@ export function DockerPanel({ sessionId, projectId }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Top bar */}
-      <div className="flex flex-wrap items-center gap-1 border-b bg-muted/30 p-1.5">
-        <Button
-          size="sm"
-          onClick={() => runAction("up", undefined, false)}
-          disabled={busy}
-        >
-          <ArrowUp className="mr-1 h-3.5 w-3.5" />
-          Up all
-        </Button>
-        <Button
-          size="sm"
-          variant="destructive"
-          onClick={() => runAction("down", undefined, true)}
-          disabled={busy}
-        >
-          <ArrowDown className="mr-1 h-3.5 w-3.5" />
-          Down
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => runAction("restart", undefined, true)}
-          disabled={busy}
-        >
-          <RefreshCcw className="mr-1 h-3.5 w-3.5" />
-          Restart all
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => runAction("build")}
-          disabled={busy}
-        >
-          <Hammer className="mr-1 h-3.5 w-3.5" />
-          Build
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => runAction("pull")}
-          disabled={busy}
-        >
-          <Download className="mr-1 h-3.5 w-3.5" />
-          Pull
-        </Button>
+      {/* Top bar — safe actions only (refresh + filter). Mutating
+          project-wide commands (`up all`, `down`, `restart all`, …)
+          were removed because a single misclick can nuke running
+          services. Use the per-service buttons. */}
+      <div className="flex items-center gap-2 border-b bg-muted/30 p-1.5">
+        <Container className="h-4 w-4 text-primary" />
+        <span className="text-xs font-medium">Docker Compose</span>
+        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+          {rows.length} services
+        </span>
         <div className="flex-1" />
-        <span className="font-mono text-[10px] text-muted-foreground">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Filter…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="h-7 w-56 pl-7 text-xs"
+          />
+        </div>
+        <span
+          title={caps?.compose_version ?? ""}
+          className="font-mono text-[10px] text-muted-foreground"
+        >
           {caps?.compose_version ?? ""}
         </span>
         <Button size="icon" variant="ghost" onClick={refresh} disabled={busy}>
@@ -340,7 +338,9 @@ export function DockerPanel({ sessionId, projectId }: Props) {
               <th className="px-3 py-1.5 text-left font-medium">Service</th>
               <th className="px-3 py-1.5 text-left font-medium">Image</th>
               <th className="px-3 py-1.5 text-left font-medium">Status</th>
-              <th className="px-3 py-1.5 text-right font-medium">Actions</th>
+              <th className="w-[480px] px-3 py-1.5 text-right font-medium">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -455,8 +455,8 @@ function Row({
           </span>
         )}
       </td>
-      <td className="px-3 py-1.5 text-right">
-        <div className="inline-flex flex-wrap justify-end gap-1">
+      <td className="whitespace-nowrap px-3 py-1.5 text-right">
+        <div className="inline-flex items-center justify-end gap-1">
           {svc.is_oneoff ? (
             <Button
               size="sm"
