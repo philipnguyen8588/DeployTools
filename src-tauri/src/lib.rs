@@ -8,6 +8,7 @@ pub mod cloudflare;
 pub mod commands;
 pub mod compose;
 pub mod errors;
+pub mod ftp;
 pub mod models;
 pub mod rsync;
 pub mod ssh;

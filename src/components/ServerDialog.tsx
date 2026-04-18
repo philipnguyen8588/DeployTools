@@ -30,7 +30,14 @@ const emptyServer: Server = {
   port: 22,
   user: "",
   auth: { kind: "password", password: "" },
+  protocol: "ssh",
   host_key_fingerprint: null,
+};
+
+const DEFAULT_PORT: Record<"ssh" | "ftp" | "ftps", number> = {
+  ssh: 22,
+  ftp: 21,
+  ftps: 21,
 };
 
 export function ServerDialog({ serverId, onClose, onSaved }: Props) {
@@ -175,6 +182,44 @@ export function ServerDialog({ serverId, onClose, onSaved }: Props) {
                 }
               />
             </div>
+            <div className="col-span-2 space-y-1.5">
+              <Label>Protocol</Label>
+              <div className="flex gap-2">
+                {(["ssh", "ftp", "ftps"] as const).map((p) => (
+                  <Button
+                    key={p}
+                    type="button"
+                    size="sm"
+                    variant={server.protocol === p ? "default" : "outline"}
+                    onClick={() => {
+                      // Keep the current port if the user had customised
+                      // it (i.e. not matching the default for the old
+                      // protocol); otherwise snap to the new default.
+                      const wasDefault =
+                        server.port === DEFAULT_PORT[server.protocol];
+                      setServer({
+                        ...server,
+                        protocol: p,
+                        port: wasDefault ? DEFAULT_PORT[p] : server.port,
+                        // FTP/FTPS don't support key auth.
+                        auth:
+                          p !== "ssh" && server.auth.kind === "private_key"
+                            ? { kind: "password", password: "" }
+                            : server.auth,
+                      });
+                      if (p !== "ssh") setAuthKind("password");
+                    }}
+                  >
+                    {p.toUpperCase()}
+                  </Button>
+                ))}
+              </div>
+              {server.protocol === "ftps" && (
+                <p className="text-[11px] text-yellow-600 dark:text-yellow-400">
+                  FTPS (TLS) is not yet supported — use plain FTP for now.
+                </p>
+              )}
+            </div>
             <div className="space-y-1.5">
               <Label>Host</Label>
               <Input
@@ -225,6 +270,12 @@ export function ServerDialog({ serverId, onClose, onSaved }: Props) {
                 type="button"
                 variant={authKind === "private_key" ? "default" : "outline"}
                 size="sm"
+                disabled={server.protocol !== "ssh"}
+                title={
+                  server.protocol !== "ssh"
+                    ? "Key auth is SSH-only"
+                    : undefined
+                }
                 onClick={() => setAuthKind("private_key")}
               >
                 Private key

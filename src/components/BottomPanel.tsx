@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import {
   Plus,
   X,
@@ -8,20 +8,36 @@ import {
   Container,
   Cog,
   Activity as ActivityIcon,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+// Terminal + ActivityConsole are eagerly imported — Terminal is the
+// default landing tab and Activity is the only tab on FTP sessions.
 import { Terminal } from "./Terminal";
 import { ActivityConsole } from "./ActivityConsole";
-import { GitPanel } from "./GitPanel";
-import { DockerPanel } from "./DockerPanel";
-import { ServicePanel } from "./ServicePanel";
-import { MetricsPanel } from "./MetricsPanel";
+
+// The rest are lazy — they only load when the user activates the tab,
+// trimming the initial JS heap considerably on app start.
+const GitPanel = lazy(() =>
+  import("./GitPanel").then((m) => ({ default: m.GitPanel })),
+);
+const DockerPanel = lazy(() =>
+  import("./DockerPanel").then((m) => ({ default: m.DockerPanel })),
+);
+const ServicePanel = lazy(() =>
+  import("./ServicePanel").then((m) => ({ default: m.ServicePanel })),
+);
+const MetricsPanel = lazy(() =>
+  import("./MetricsPanel").then((m) => ({ default: m.MetricsPanel })),
+);
 
 interface Props {
   sessionId: string;
   projectId: string | null;
   projectRemoteBase?: string | null;
+  /** Wire protocol — gates SSH-only tabs (Terminal, Git, Docker, …). */
+  protocol?: "ssh" | "ftp" | "ftps";
 }
 
 type TabKind =
@@ -52,12 +68,29 @@ export function BottomPanel({
   sessionId,
   projectId,
   projectRemoteBase,
+  protocol = "ssh",
 }: Props) {
+  const isSsh = protocol === "ssh";
   const [terminalTabs, setTerminalTabs] = useState<
     { id: string; label: string; seed?: string }[]
-  >(() => [{ id: `t-${Date.now()}-1`, label: "Terminal 1" }]);
-  const [active, setActive] = useState<string>(terminalTabs[0].id);
+  >(() =>
+    isSsh ? [{ id: `t-${Date.now()}-1`, label: "Terminal 1" }] : [],
+  );
+  const [active, setActive] = useState<string>(
+    isSsh ? terminalTabs[0]?.id ?? "activity" : "activity",
+  );
+  // Track which tabs have EVER been activated. We only render their
+  // contents once visited so unused panels (e.g. Resources on an FTP
+  // session, Docker on a non-compose project) never cost RAM.
+  const [visited, setVisited] = useState<Set<string>>(
+    () => new Set([active]),
+  );
   const counterRef = useCounter(terminalTabs.length);
+
+  function activate(id: string) {
+    setActive(id);
+    setVisited((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }
 
   function newTerminal(opts?: { label?: string; seed?: string }) {
     const n = counterRef() + 1;
@@ -66,7 +99,7 @@ export function BottomPanel({
       ...t,
       { id, label: opts?.label ?? `Terminal ${n}`, seed: opts?.seed },
     ]);
-    setActive(id);
+    activate(id);
   }
 
   // Anyone in the tree (DockerPanel, SnippetRunner, …) can open a new
@@ -92,28 +125,33 @@ export function BottomPanel({
     setTerminalTabs((prev) => {
       const remaining = prev.filter((t) => t.id !== id);
       if (active === id) {
-        setActive(remaining[remaining.length - 1]?.id ?? "activity");
+        const next = remaining[remaining.length - 1]?.id ?? "activity";
+        activate(next);
       }
       return remaining;
     });
   }
 
-  const ordered: BottomTab[] = [
-    ...terminalTabs.map((t) => ({
-      kind: "terminal" as const,
-      id: t.id,
-      label: t.label,
-    })),
-    ...(projectId
-      ? [
-          { kind: "git" as const, id: "git", label: "Git" },
-          { kind: "docker" as const, id: "docker", label: "Docker" },
-        ]
-      : []),
-    { kind: "services", id: "services", label: "Services" },
-    { kind: "resources", id: "resources", label: "Resources" },
-    { kind: "activity", id: "activity", label: "Activity" },
-  ];
+  // SSH sessions get the full tab suite; FTP/FTPS only get Activity
+  // (no terminal, no Docker, no metrics — these all need a shell).
+  const ordered: BottomTab[] = isSsh
+    ? [
+        ...terminalTabs.map((t) => ({
+          kind: "terminal" as const,
+          id: t.id,
+          label: t.label,
+        })),
+        ...(projectId
+          ? [
+              { kind: "git" as const, id: "git", label: "Git" },
+              { kind: "docker" as const, id: "docker", label: "Docker" },
+            ]
+          : []),
+        { kind: "services" as const, id: "services", label: "Services" },
+        { kind: "resources" as const, id: "resources", label: "Resources" },
+        { kind: "activity" as const, id: "activity", label: "Activity" },
+      ]
+    : [{ kind: "activity" as const, id: "activity", label: "Activity" }];
 
   return (
     <div className="flex h-full flex-col">
@@ -130,7 +168,7 @@ export function BottomPanel({
             <TabChip
               key={t.id}
               active={isActive}
-              onActivate={() => setActive(t.id)}
+              onActivate={() => activate(t.id)}
               onClose={
                 t.kind === "terminal"
                   ? () => closeTerminal(t.id)
@@ -155,7 +193,10 @@ export function BottomPanel({
         })}
       </div>
 
-      {/* Content — keep everything mounted */}
+      {/* Content — mount-on-first-activate.
+          Terminals + Activity stay mounted once created (we need their
+          live state). Lazy panels only render AFTER the user first
+          visits the tab — unvisited tabs cost no JS heap at all. */}
       <div className="relative min-h-0 flex-1">
         {terminalTabs.map((t) => (
           <div
@@ -169,31 +210,63 @@ export function BottomPanel({
           </div>
         ))}
 
-        {projectId && (
-          <>
-            <Pane visible={active === "git"}>
-              <GitPanel
-                projectId={projectId}
-                sessionId={sessionId}
-                remoteBase={projectRemoteBase ?? "/"}
-              />
-            </Pane>
-            <Pane visible={active === "docker"}>
-              <DockerPanel sessionId={sessionId} projectId={projectId} />
-            </Pane>
-          </>
+        {projectId && visited.has("git") && (
+          <LazyPane visible={active === "git"}>
+            <GitPanel
+              projectId={projectId}
+              sessionId={sessionId}
+              remoteBase={projectRemoteBase ?? "/"}
+            />
+          </LazyPane>
         )}
-
-        <Pane visible={active === "services"}>
-          <ServicePanel sessionId={sessionId} />
-        </Pane>
-        <Pane visible={active === "resources"}>
-          <MetricsPanel sessionId={sessionId} active={active === "resources"} />
-        </Pane>
+        {projectId && visited.has("docker") && (
+          <LazyPane visible={active === "docker"}>
+            <DockerPanel sessionId={sessionId} projectId={projectId} />
+          </LazyPane>
+        )}
+        {visited.has("services") && (
+          <LazyPane visible={active === "services"}>
+            <ServicePanel sessionId={sessionId} />
+          </LazyPane>
+        )}
+        {visited.has("resources") && (
+          <LazyPane visible={active === "resources"}>
+            <MetricsPanel
+              sessionId={sessionId}
+              active={active === "resources"}
+            />
+          </LazyPane>
+        )}
+        {/* Activity mounts eagerly — cheap, and it's the FTP default. */}
         <Pane visible={active === "activity"}>
           <ActivityConsole sessionId={sessionId} projectId={projectId} />
         </Pane>
       </div>
+    </div>
+  );
+}
+
+function LazyPane({
+  visible,
+  children,
+}: {
+  visible: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={cn("absolute inset-0", visible ? "block" : "hidden")}>
+      <Suspense
+        fallback={
+          <div className="grid h-full place-items-center text-xs text-muted-foreground">
+            <span className="flex items-center gap-2">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Loading…
+            </span>
+          </div>
+        }
+      >
+        {children}
+      </Suspense>
     </div>
   );
 }

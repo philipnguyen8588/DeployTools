@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Lock, Rocket, KeyRound } from "lucide-react";
+import { Suspense, lazy, useEffect, useState } from "react";
+import { Lock, Rocket, KeyRound, Loader2 } from "lucide-react";
 
 import { UnlockDialog } from "./components/UnlockDialog";
 import { Sidebar } from "./components/Sidebar";
@@ -7,10 +7,26 @@ import { TabBar } from "./components/TabBar";
 import { ServerTab } from "./components/ServerTab";
 import { TitleBar } from "./components/TitleBar";
 import { StatusBar } from "./components/StatusBar";
-import { CloudflarePanel } from "./components/CloudflarePanel";
-import { SnippetManager } from "./components/SnippetManager";
-import { ChangePasswordDialog } from "./components/ChangePasswordDialog";
 import { Button } from "./components/ui/button";
+
+// Lazy-load view-level panels — they only mount when the user
+// navigates to their sidebar entry (or opens the dialog), saving the
+// initial JS heap + V8 parse cost at startup.
+const CloudflarePanel = lazy(() =>
+  import("./components/CloudflarePanel").then((m) => ({
+    default: m.CloudflarePanel,
+  })),
+);
+const SnippetManager = lazy(() =>
+  import("./components/SnippetManager").then((m) => ({
+    default: m.SnippetManager,
+  })),
+);
+const ChangePasswordDialog = lazy(() =>
+  import("./components/ChangePasswordDialog").then((m) => ({
+    default: m.ChangePasswordDialog,
+  })),
+);
 
 import { useVault } from "./stores/vault";
 import { useSessions } from "./stores/sessions";
@@ -74,7 +90,9 @@ export default function App() {
       />
 
       {changingPassword && (
-        <ChangePasswordDialog onClose={() => setChangingPassword(false)} />
+        <Suspense fallback={null}>
+          <ChangePasswordDialog onClose={() => setChangingPassword(false)} />
+        </Suspense>
       )}
 
       <div className="flex min-h-0 flex-1">
@@ -82,9 +100,13 @@ export default function App() {
 
         <main className="flex min-w-0 flex-1 flex-col">
           {view === "cloudflare" ? (
-            <CloudflarePanel />
+            <Suspense fallback={<LazyLoading />}>
+              <CloudflarePanel />
+            </Suspense>
           ) : view === "snippets" ? (
-            <SnippetManager />
+            <Suspense fallback={<LazyLoading />}>
+              <SnippetManager />
+            </Suspense>
           ) : (
             <>
               <TabBar />
@@ -101,6 +123,18 @@ export default function App() {
       </div>
 
       <StatusBar />
+    </div>
+  );
+}
+
+/** Minimal skeleton shown while a lazy-loaded chunk streams in. */
+function LazyLoading() {
+  return (
+    <div className="grid h-full place-items-center text-sm text-muted-foreground">
+      <span className="flex items-center gap-2">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading…
+      </span>
     </div>
   );
 }

@@ -35,34 +35,37 @@
     --radius: 0.5rem;
   }
 
+  /* Dark theme — Docker Desktop-inspired. Deep blue-black background
+     (#17191E), slightly elevated cards/sidebar (#1C1E26), Docker's
+     signature primary blue (#1D63ED), low-contrast borders. */
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
+    --background: 227 14% 10%;           /* #17191E */
+    --foreground: 220 15% 92%;           /* #E6E9EF */
 
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
+    --card: 225 14% 13%;                 /* #1C1E26 */
+    --card-foreground: 220 15% 92%;
 
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 225 14% 14%;
+    --popover-foreground: 220 15% 92%;
 
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: 217 85% 52%;              /* #1D63ED (Docker blue) */
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 223 12% 18%;
+    --secondary-foreground: 220 15% 92%;
 
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
+    --muted: 223 12% 18%;
+    --muted-foreground: 220 11% 66%;     /* #A0A6B2 */
 
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
+    --accent: 223 12% 22%;               /* #2A2D35 (hover / selected) */
+    --accent-foreground: 220 15% 95%;
 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
+    --border: 222 10% 20%;               /* very subtle */
+    --input: 223 12% 16%;
+    --ring: 217 85% 52%;
   }
 }
 

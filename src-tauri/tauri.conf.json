@@ -22,7 +22,8 @@
         "fullscreen": false,
         "decorations": false,
         "transparent": false,
-        "shadow": true
+        "shadow": true,
+        "additionalBrowserArgs": "--disable-features=TranslateUI,MsEdgeCloudSettings,AutofillServerCommunication,msEdgeAiHistoryForSite --disable-extensions --disable-component-update --disable-background-networking"
       }
     ],
     "security": {

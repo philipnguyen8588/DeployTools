@@ -10,6 +10,8 @@ export type AuthMethod =
   | { kind: "password"; password: string }
   | { kind: "private_key"; key_path: string; passphrase?: string | null };
 
+export type Protocol = "ssh" | "ftp" | "ftps";
+
 export interface Server {
   id: UUID;
   name: string;
@@ -17,6 +19,7 @@ export interface Server {
   port: number;
   user: string;
   auth: AuthMethod;
+  protocol: Protocol;
   host_key_fingerprint?: string | null;
 }
 
@@ -27,6 +30,7 @@ export interface ServerSummary {
   port: number;
   user: string;
   auth_kind: "password" | "key";
+  protocol: Protocol;
   has_fingerprint: boolean;
 }
 
@@ -52,6 +56,7 @@ export interface SessionSummary {
   terminal_count: number;
   fingerprint: string;
   opened_at: number; // unix ms
+  protocol: Protocol;
 }
 
 export interface RemoteEntry {

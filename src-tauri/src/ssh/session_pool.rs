@@ -97,6 +97,7 @@ impl SessionPool {
                     terminal_count: s.terminals.len(),
                     fingerprint: s.fingerprint.clone(),
                     opened_at: s.opened_at,
+                    protocol: crate::models::Protocol::Ssh,
                 }
             })
             .collect()
@@ -118,6 +119,7 @@ pub struct SessionSummary {
     pub fingerprint: String,
     #[serde(with = "systime_serde")]
     pub opened_at: SystemTime,
+    pub protocol: crate::models::Protocol,
 }
 
 mod systime_serde {

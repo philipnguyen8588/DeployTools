@@ -8,7 +8,6 @@ import type {
   CfDnsRecord,
   CfRecordInput,
   CfZone,
-  ComposeService,
   DockerAction,
   DockerInfo,
   Metrics,

@@ -10,6 +10,7 @@ import {
   Search,
   AlertTriangle,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import * as api from "@/lib/api";
 import type { ActivityLine } from "@/lib/types";
@@ -201,7 +202,7 @@ export function DockerLogDialog({
         <div
           ref={scrollRef}
           className={cn(
-            "min-h-0 flex-1 overflow-y-auto rounded bg-[#0a0e14] p-2 font-mono text-[11.5px] leading-5 text-[#e6edf3]",
+            "min-h-0 flex-1 overflow-y-auto rounded bg-background p-2 font-mono text-[11.5px] leading-5 text-foreground",
           )}
         >
           {error ? (
@@ -229,7 +230,9 @@ export function DockerLogDialog({
 }
 
 function append(prev: string[], add: string[]): string[] {
-  const MAX = 5000;
+  // 2k lines keeps the in-memory tail bounded. Users can "Save" the
+  // current buffer to disk if they need a longer capture.
+  const MAX = 2000;
   const next = [...prev, ...add];
   return next.length > MAX ? next.slice(next.length - MAX) : next;
 }

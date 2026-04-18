@@ -1,4 +1,6 @@
-//! Open / close / list SSH sessions (one per UI tab).
+//! Open / close / list sessions. Backs both SSH and FTP — `open_session`
+//! dispatches by `Server.protocol` and places the resulting session in
+//! the matching pool on `AppState`.
 
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -8,20 +10,18 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
-use crate::models::{Project, Server};
+use crate::models::{Project, Protocol, Server};
 use crate::ssh::client;
 use crate::ssh::session_pool::{SessionSummary, SshSession};
 use crate::state::AppState;
 
-/// Open a new SSH session. Exactly one of `server_id` must be given;
-/// `project_id` is optional and used to auto-`cd` terminals.
+/// Open a remote session (SSH or FTP/FTPS) for the given server.
 #[tauri::command]
 pub async fn open_session(
     server_id: Uuid,
     project_id: Option<Uuid>,
     state: State<'_, AppState>,
 ) -> AppResult<SessionSummary> {
-    // Look up server + optional project from vault.
     let (server, project): (Option<Server>, Option<Project>) = state
         .vault
         .read(|d| {
@@ -32,59 +32,78 @@ pub async fn open_session(
         })
         .await?;
     let server = server.ok_or_else(|| AppError::ServerNotFound(server_id.to_string()))?;
-
-    let ssh = client::connect(&server).await?;
-    let fp = ssh.fingerprint.clone();
-
-    // Pin fingerprint on first connect.
-    if server.host_key_fingerprint.is_none() {
-        state
-            .vault
-            .write(|data| {
-                if let Some(s) = data.servers.iter_mut().find(|s| s.id == server_id) {
-                    s.host_key_fingerprint = Some(fp.clone());
-                }
-            })
-            .await?;
-    }
-
     let id = Uuid::new_v4().to_string();
-    let session = Arc::new(SshSession {
-        id: id.clone(),
-        server_id,
-        project,
-        handle: Arc::new(Mutex::new(ssh.handle)),
-        fingerprint: fp,
-        terminals: dashmap::DashMap::new(),
-        opened_at: SystemTime::now(),
-        app: state.app.clone(),
-        capabilities: tokio::sync::RwLock::new(None),
-    });
 
-    state.sessions.insert(session.clone());
-
-    Ok(SessionSummary {
-        id: session.id.clone(),
-        server_id: session.server_id,
-        project_id: session.project.as_ref().map(|p| p.id),
-        terminal_count: 0,
-        fingerprint: session.fingerprint.clone(),
-        opened_at: session.opened_at,
-    })
+    match server.protocol {
+        Protocol::Ssh => {
+            let ssh = client::connect(&server).await?;
+            let fp = ssh.fingerprint.clone();
+            if server.host_key_fingerprint.is_none() {
+                state
+                    .vault
+                    .write(|data| {
+                        if let Some(s) = data.servers.iter_mut().find(|s| s.id == server_id) {
+                            s.host_key_fingerprint = Some(fp.clone());
+                        }
+                    })
+                    .await?;
+            }
+            let session = Arc::new(SshSession {
+                id: id.clone(),
+                server_id,
+                project,
+                handle: Arc::new(Mutex::new(ssh.handle)),
+                fingerprint: fp.clone(),
+                terminals: dashmap::DashMap::new(),
+                opened_at: SystemTime::now(),
+                app: state.app.clone(),
+                capabilities: tokio::sync::RwLock::new(None),
+            });
+            state.sessions.insert(session.clone());
+            Ok(SessionSummary {
+                id,
+                server_id,
+                project_id: session.project.as_ref().map(|p| p.id),
+                terminal_count: 0,
+                fingerprint: fp,
+                opened_at: session.opened_at,
+                protocol: Protocol::Ssh,
+            })
+        }
+        Protocol::Ftp | Protocol::Ftps => {
+            let ftp = crate::ftp::FtpSession::connect(&server).await?;
+            state.ftp_sessions.insert(id.clone(), Arc::new(ftp));
+            Ok(SessionSummary {
+                id,
+                server_id,
+                project_id: project.as_ref().map(|p| p.id),
+                terminal_count: 0,
+                fingerprint: String::new(),
+                opened_at: SystemTime::now(),
+                protocol: server.protocol,
+            })
+        }
+    }
 }
 
 #[tauri::command]
 pub async fn close_session(session_id: String, state: State<'_, AppState>) -> AppResult<()> {
+    // Try SSH first, then FTP.
     if let Some(session) = state.sessions.remove(&session_id) {
-        // Close all terminals.
         for kv in session.terminals.iter() {
             let _ = kv.value().tx.send(crate::ssh::session_pool::TerminalCommand::Close);
         }
-        // Disconnect cleanly.
         let mut handle = session.handle.lock().await;
         let _ = handle
             .disconnect(russh::Disconnect::ByApplication, "", "en")
             .await;
+        return Ok(());
+    }
+    if let Some((_, ftp)) = state.ftp_sessions.remove(&session_id) {
+        if let Ok(ftp_owned) = Arc::try_unwrap(ftp) {
+            ftp_owned.quit().await;
+        }
+        // if there are outstanding Arc refs, they'll clean up on drop.
     }
     Ok(())
 }

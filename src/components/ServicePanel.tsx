@@ -156,7 +156,7 @@ export function ServicePanel({ sessionId }: Props) {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-muted/50 text-muted-foreground">
+          <thead className="sticky top-0 z-10 bg-card text-muted-foreground shadow-[0_1px_0_0_hsl(var(--border))]">
             <tr>
               <th className="px-3 py-1.5 text-left font-medium">Unit</th>
               <th className="w-20 px-3 py-1.5 text-left font-medium">Active</th>
@@ -164,7 +164,7 @@ export function ServicePanel({ sessionId }: Props) {
               <th className="px-3 py-1.5 text-left font-medium">
                 Description
               </th>
-              <th className="w-[280px] px-3 py-1.5 text-right font-medium">
+              <th className="w-[220px] px-3 py-1.5 text-right font-medium">
                 Actions
               </th>
             </tr>
@@ -187,15 +187,16 @@ export function ServicePanel({ sessionId }: Props) {
                 <td className="max-w-[28ch] truncate px-3 py-1.5 text-muted-foreground">
                   {s.description}
                 </td>
-                <td className="whitespace-nowrap px-3 py-1.5 text-right">
+                <td className="whitespace-nowrap px-3 py-1 text-right">
                   <div className="inline-flex items-center justify-end gap-1">
                     <Button
                       size="sm"
                       variant="outline"
                       disabled={!canAct || busyAction !== null}
                       onClick={() => void act(s.unit, "start")}
+                      className="h-6 px-2 text-[11px]"
                     >
-                      <Play className="mr-1 h-3 w-3 text-green-600" />
+                      <Play className="mr-1 h-3 w-3 text-green-600 dark:text-green-400" />
                       Start
                     </Button>
                     <Button
@@ -203,8 +204,9 @@ export function ServicePanel({ sessionId }: Props) {
                       variant="outline"
                       disabled={!canAct || busyAction !== null}
                       onClick={() => void act(s.unit, "restart")}
+                      className="h-6 px-2 text-[11px]"
                     >
-                      <RefreshCcw className="mr-1 h-3 w-3" />
+                      <RefreshCcw className="mr-1 h-3 w-3 text-yellow-600 dark:text-yellow-400" />
                       Restart
                     </Button>
                     <Button
@@ -212,6 +214,7 @@ export function ServicePanel({ sessionId }: Props) {
                       variant="outline"
                       disabled={!canAct || busyAction !== null}
                       onClick={() => void act(s.unit, "stop")}
+                      className="h-6 px-2 text-[11px]"
                     >
                       <StopCircle className="mr-1 h-3 w-3 text-destructive" />
                       Stop

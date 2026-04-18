@@ -8,8 +8,6 @@ import {
   RefreshCcw,
   Activity,
 } from "lucide-react";
-import { toast } from "sonner";
-
 import * as api from "@/lib/api";
 import type { Metrics } from "@/lib/types";
 import { Button } from "./ui/button";

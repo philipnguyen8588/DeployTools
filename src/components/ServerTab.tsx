@@ -27,13 +27,18 @@ export function ServerTab({ tab }: Props) {
     [projects, tab.session.project_id],
   );
 
+  const isSsh = tab.session.protocol === "ssh";
+
   return (
     <div className="flex h-full flex-col">
-      <DeployPanel
-        projectId={project?.id ?? null}
-        projectName={project?.name ?? ""}
-        sessionId={tab.session.id}
-      />
+      {/* DeployPanel uses rsync + SSH — only show for SSH sessions. */}
+      {isSsh && (
+        <DeployPanel
+          projectId={project?.id ?? null}
+          projectName={project?.name ?? ""}
+          sessionId={tab.session.id}
+        />
+      )}
 
       <PanelGroup direction="vertical" className="flex-1">
         {/* TOP: dual-pane file browsers */}
@@ -69,6 +74,7 @@ export function ServerTab({ tab }: Props) {
             sessionId={tab.session.id}
             projectId={project?.id ?? null}
             projectRemoteBase={project?.remote_path ?? null}
+            protocol={tab.session.protocol}
           />
         </Panel>
       </PanelGroup>

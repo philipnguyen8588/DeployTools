@@ -17,28 +17,32 @@ interface Props {
   seed?: string;
 }
 
-/** Dracula-ish palette for dark mode. */
+/**
+ * Dark palette that matches the app's Docker Desktop-inspired theme.
+ * Background is the same `--background` HSL (`#17191E`) so terminal
+ * tabs blend visually with the surrounding panel.
+ */
 const THEME_DARK = {
-  background: "#0a0e14",
-  foreground: "#e6edf3",
-  cursor: "#58a6ff",
-  selectionBackground: "#264f78",
-  black: "#484f58",
-  red: "#ff7b72",
-  green: "#7ee787",
-  yellow: "#f2cc60",
-  blue: "#79c0ff",
-  magenta: "#d2a8ff",
-  cyan: "#a5d6ff",
-  white: "#e6edf3",
-  brightBlack: "#6e7681",
-  brightRed: "#ffa198",
-  brightGreen: "#56d364",
-  brightYellow: "#e3b341",
-  brightBlue: "#79c0ff",
-  brightMagenta: "#d2a8ff",
-  brightCyan: "#a5d6ff",
-  brightWhite: "#f0f6fc",
+  background: "#17191E",
+  foreground: "#E6E9EF",
+  cursor: "#1D63ED",
+  selectionBackground: "#2D4A6E",
+  black: "#3A3D44",
+  red: "#FF6B6B",
+  green: "#7EE787",
+  yellow: "#F2CC60",
+  blue: "#79C0FF",
+  magenta: "#D2A8FF",
+  cyan: "#A5D6FF",
+  white: "#E6E9EF",
+  brightBlack: "#6E7681",
+  brightRed: "#FFA198",
+  brightGreen: "#56D364",
+  brightYellow: "#E3B341",
+  brightBlue: "#79C0FF",
+  brightMagenta: "#D2A8FF",
+  brightCyan: "#A5D6FF",
+  brightWhite: "#F0F6FC",
 };
 
 /** GitHub light palette. */
@@ -90,7 +94,10 @@ export function Terminal({ sessionId, seed }: Props) {
       fontSize: 13,
       cursorBlink: true,
       allowProposedApi: true,
-      scrollback: 5000,
+      // 2k lines is ~200-400 KB per terminal (vs 500 KB-1 MB at 5k).
+      // Users who need more can scroll back to their shell's own buffer
+      // or tail the log directly.
+      scrollback: 2000,
       // Disable xterm's built-in right-click selection so we can use
       // right-click for paste (Windows convention).
       rightClickSelectsWord: false,

@@ -6,6 +6,7 @@ use dashmap::DashMap;
 use tauri::{AppHandle, Manager};
 use tokio::sync::oneshot;
 
+use crate::ftp::FtpSession;
 use crate::ssh::session_pool::{SessionId, SessionPool};
 use crate::vault::Vault;
 
@@ -25,6 +26,12 @@ pub struct AppState {
     pub app: AppHandle,
     pub vault: Arc<Vault>,
     pub sessions: Arc<SessionPool>,
+
+    /// Parallel pool for FTP/FTPS sessions — same `SessionId` keyspace
+    /// so the frontend doesn't have to think about which pool the
+    /// session lives in. Docker/terminal/service commands error out
+    /// when they find the id here instead of in `sessions`.
+    pub ftp_sessions: Arc<DashMap<SessionId, Arc<FtpSession>>>,
 
     /// Mutating command currently running on a session, if any.
     pub inflight: Arc<DashMap<SessionId, InflightKind>>,
@@ -48,6 +55,7 @@ impl AppState {
             app,
             vault: Arc::new(Vault::new(vault_path)),
             sessions: Arc::new(SessionPool::new()),
+            ftp_sessions: Arc::new(DashMap::new()),
             inflight: Arc::new(DashMap::new()),
             follow_cancellers: Arc::new(DashMap::new()),
         }

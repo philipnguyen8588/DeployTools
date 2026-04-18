@@ -45,7 +45,7 @@ export function ActivityConsole({ sessionId, projectId }: Props) {
     counterRef.current += 1;
     const id = `${Date.now()}-${counterRef.current}`;
     const time = new Date().toLocaleTimeString();
-    setLines((prev) => [...prev.slice(-1999), { id, time, ...l }]);
+    setLines((prev) => [...prev.slice(-999), { id, time, ...l }]);
   };
 
   useEffect(() => {
@@ -82,7 +82,7 @@ export function ActivityConsole({ sessionId, projectId }: Props) {
               source: p.source,
               message: p.message,
             }));
-            setLines((prev) => [...prev.slice(-2000 + toAdd.length), ...toAdd]);
+            setLines((prev) => [...prev.slice(-1000 + toAdd.length), ...toAdd]);
           },
         ),
       );
@@ -140,16 +140,16 @@ export function ActivityConsole({ sessionId, projectId }: Props) {
   }, [lines]);
 
   return (
-    <div className="flex h-full flex-col bg-[#0a0e14]">
-      <div className="flex items-center justify-between border-b border-white/10 px-2 py-1 text-[11px] text-[#e6edf3]/70">
+    <div className="flex h-full flex-col bg-background">
+      <div className="flex items-center justify-between border-b px-2 py-1 text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1.5">
-          <CircleDot className="h-3 w-3 text-green-400" />
+          <CircleDot className="h-3 w-3 text-green-500" />
           {lines.length} events
         </span>
         <Button
           size="sm"
           variant="ghost"
-          className="h-6 text-[11px] text-[#e6edf3]/70 hover:bg-white/10 hover:text-white"
+          className="h-6 text-[11px]"
           onClick={() => setLines([])}
         >
           <Trash2 className="mr-1 h-3 w-3" />
@@ -159,7 +159,7 @@ export function ActivityConsole({ sessionId, projectId }: Props) {
 
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto p-2 font-mono text-[11.5px] leading-5 text-[#e6edf3]"
+        className="flex-1 overflow-y-auto p-2 font-mono text-[11.5px] leading-5 text-foreground"
       >
         {lines.length === 0 ? (
           <div className="p-4 text-center text-muted-foreground">
@@ -177,9 +177,9 @@ function Row({ line }: { line: DisplayLine }) {
   const { color, Icon } = decorate(line.level);
   return (
     <div className="flex items-start gap-2 whitespace-pre-wrap">
-      <span className="shrink-0 text-[#6e7681]">{line.time}</span>
+      <span className="shrink-0 text-muted-foreground">{line.time}</span>
       <Icon className={cn("mt-[3px] h-3 w-3 shrink-0", color)} />
-      <span className="shrink-0 rounded bg-white/10 px-1 text-[10px] uppercase tracking-wide text-[#e6edf3]/70">
+      <span className="shrink-0 rounded bg-muted px-1 text-[10px] uppercase tracking-wide text-muted-foreground">
         {line.source}
       </span>
       <span className={cn("flex-1", color)}>{line.message}</span>
@@ -190,12 +190,12 @@ function Row({ line }: { line: DisplayLine }) {
 function decorate(level: ActivityLevel) {
   switch (level) {
     case "success":
-      return { color: "text-[#7ee787]", Icon: CheckCircle2 };
+      return { color: "text-green-500", Icon: CheckCircle2 };
     case "warn":
-      return { color: "text-[#f2cc60]", Icon: AlertTriangle };
+      return { color: "text-yellow-500", Icon: AlertTriangle };
     case "error":
-      return { color: "text-[#ff7b72]", Icon: XCircle };
+      return { color: "text-red-500", Icon: XCircle };
     default:
-      return { color: "text-[#e6edf3]", Icon: Info };
+      return { color: "text-foreground", Icon: Info };
   }
 }

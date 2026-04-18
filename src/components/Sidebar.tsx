@@ -19,7 +19,6 @@ import { useProjects } from "@/stores/projects";
 import { useSessions } from "@/stores/sessions";
 import { useView } from "@/stores/view";
 import * as api from "@/lib/api";
-import { Button } from "./ui/button";
 import { ServerDialog } from "./ServerDialog";
 import { ProjectDialog } from "./ProjectDialog";
 import { cn } from "@/lib/utils";

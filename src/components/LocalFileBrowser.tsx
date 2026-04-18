@@ -177,7 +177,7 @@ export function LocalFileBrowser({
 
       <div className="flex-1 overflow-y-auto">
         <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-muted/50 text-muted-foreground">
+          <thead className="sticky top-0 z-10 bg-card text-muted-foreground shadow-[0_1px_0_0_hsl(var(--border))]">
             <tr>
               <th className="px-3 py-1.5 text-left font-medium">Name</th>
               <th className="px-3 py-1.5 text-right font-medium">Size</th>

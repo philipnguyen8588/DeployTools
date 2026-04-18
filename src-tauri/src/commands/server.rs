@@ -73,45 +73,58 @@ pub async fn test_connection_config(server: Server) -> AppResult<String> {
     // during an edit flow.
     let mut probe = server;
     probe.host_key_fingerprint = None;
-    let client = client::connect(&probe).await?;
-    let fp = client.fingerprint.clone();
-    let mut handle = client.handle;
-    let _ = handle
-        .disconnect(russh::Disconnect::ByApplication, "", "en")
-        .await;
-    Ok(fp)
+    match probe.protocol {
+        crate::models::Protocol::Ssh => {
+            let client = client::connect(&probe).await?;
+            let fp = client.fingerprint.clone();
+            let mut handle = client.handle;
+            let _ = handle
+                .disconnect(russh::Disconnect::ByApplication, "", "en")
+                .await;
+            Ok(fp)
+        }
+        crate::models::Protocol::Ftp | crate::models::Protocol::Ftps => {
+            let ftp = crate::ftp::FtpSession::connect(&probe).await?;
+            ftp.quit().await;
+            Ok(format!("{:?}", probe.protocol).to_uppercase() + " OK")
+        }
+    }
 }
 
 /// Try to connect using the server's config. On success, pin the host
 /// key fingerprint (if not already pinned). Returns the observed fingerprint.
 #[tauri::command]
 pub async fn test_connection(id: Uuid, state: State<'_, AppState>) -> AppResult<String> {
-    // Clone the server record out of the vault so we can drop the lock.
     let server: Server = state
         .vault
         .read(|d| d.servers.iter().find(|s| s.id == id).cloned())
         .await?
         .ok_or_else(|| AppError::ServerNotFound(id.to_string()))?;
 
-    let client = client::connect(&server).await?;
-    let fp = client.fingerprint.clone();
-
-    // Persist fingerprint on first success (TOFU).
-    if server.host_key_fingerprint.is_none() {
-        state
-            .vault
-            .write(|data| {
-                if let Some(s) = data.servers.iter_mut().find(|s| s.id == id) {
-                    s.host_key_fingerprint = Some(fp.clone());
-                }
-            })
-            .await?;
+    match server.protocol {
+        crate::models::Protocol::Ssh => {
+            let client = client::connect(&server).await?;
+            let fp = client.fingerprint.clone();
+            if server.host_key_fingerprint.is_none() {
+                state
+                    .vault
+                    .write(|data| {
+                        if let Some(s) = data.servers.iter_mut().find(|s| s.id == id) {
+                            s.host_key_fingerprint = Some(fp.clone());
+                        }
+                    })
+                    .await?;
+            }
+            let mut handle = client.handle;
+            let _ = handle
+                .disconnect(russh::Disconnect::ByApplication, "", "en")
+                .await;
+            Ok(fp)
+        }
+        crate::models::Protocol::Ftp | crate::models::Protocol::Ftps => {
+            let ftp = crate::ftp::FtpSession::connect(&server).await?;
+            ftp.quit().await;
+            Ok(format!("{:?}", server.protocol).to_uppercase() + " OK")
+        }
     }
-
-    // Disconnect immediately — we were only testing.
-    let mut handle = client.handle;
-    let _ = handle
-        .disconnect(russh::Disconnect::ByApplication, "", "en")
-        .await;
-    Ok(fp)
 }

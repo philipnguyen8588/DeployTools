@@ -333,12 +333,12 @@ export function DockerPanel({ sessionId, projectId }: Props) {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-muted/50 text-muted-foreground">
+          <thead className="sticky top-0 z-10 bg-card text-muted-foreground shadow-[0_1px_0_0_hsl(var(--border))]">
             <tr>
               <th className="px-3 py-1.5 text-left font-medium">Service</th>
               <th className="px-3 py-1.5 text-left font-medium">Image</th>
               <th className="px-3 py-1.5 text-left font-medium">Status</th>
-              <th className="w-[480px] px-3 py-1.5 text-right font-medium">
+              <th className="w-[400px] px-3 py-1.5 text-right font-medium">
                 Actions
               </th>
             </tr>
@@ -455,15 +455,16 @@ function Row({
           </span>
         )}
       </td>
-      <td className="whitespace-nowrap px-3 py-1.5 text-right">
+      <td className="whitespace-nowrap px-3 py-1 text-right">
         <div className="inline-flex items-center justify-end gap-1">
           {svc.is_oneoff ? (
             <Button
               size="sm"
               disabled={busy}
               onClick={onOneOff}
+              className="h-6 px-2 text-[11px]"
             >
-              <Play className="mr-1 h-3 w-3" />
+              <Play className="mr-1 h-3 w-3 text-green-400" />
               Run
             </Button>
           ) : (
@@ -473,8 +474,9 @@ function Row({
                 variant="outline"
                 disabled={busy}
                 onClick={() => onAction("up", svc.name, false)}
+                className="h-6 px-2 text-[11px]"
               >
-                <ArrowUp className="mr-1 h-3 w-3" />
+                <ArrowUp className="mr-1 h-3 w-3 text-green-600 dark:text-green-400" />
                 Up
               </Button>
               <Button
@@ -482,8 +484,9 @@ function Row({
                 variant="outline"
                 disabled={busy}
                 onClick={() => onAction("restart", svc.name, true)}
+                className="h-6 px-2 text-[11px]"
               >
-                <RefreshCcw className="mr-1 h-3 w-3" />
+                <RefreshCcw className="mr-1 h-3 w-3 text-yellow-600 dark:text-yellow-400" />
                 Restart
               </Button>
               <Button
@@ -491,16 +494,18 @@ function Row({
                 variant="outline"
                 disabled={busy}
                 onClick={() => onAction("build", svc.name, false)}
+                className="h-6 px-2 text-[11px]"
               >
-                <Hammer className="mr-1 h-3 w-3" />
+                <Hammer className="mr-1 h-3 w-3 text-orange-600 dark:text-orange-400" />
                 Build
               </Button>
               <Button
                 size="sm"
                 variant="outline"
                 onClick={onOpenLogs}
+                className="h-6 px-2 text-[11px]"
               >
-                <ScrollText className="mr-1 h-3 w-3" />
+                <ScrollText className="mr-1 h-3 w-3 text-blue-600 dark:text-blue-400" />
                 Logs
               </Button>
               <Button
@@ -508,8 +513,9 @@ function Row({
                 variant="outline"
                 disabled={!isRunning}
                 onClick={onExecShell}
+                className="h-6 px-2 text-[11px]"
               >
-                <TerminalSquare className="mr-1 h-3 w-3" />
+                <TerminalSquare className="mr-1 h-3 w-3 text-purple-600 dark:text-purple-400" />
                 Shell
               </Button>
             </>

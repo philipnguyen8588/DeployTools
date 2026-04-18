@@ -27,7 +27,7 @@ interface SessionsState {
   updateLocalPath: (sessionId: string, path: string) => void;
 }
 
-export const useSessions = create<SessionsState>((set, get) => ({
+export const useSessions = create<SessionsState>((set) => ({
   tabs: [],
   activeId: null,
 

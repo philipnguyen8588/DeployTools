@@ -49,7 +49,30 @@ pub enum AuthMethod {
     },
 }
 
-/// An SSH server profile.
+/// Wire protocol used to reach the server. `Ssh` gives you the full
+/// feature set (terminal, Docker, services, compare). `Ftp` / `Ftps`
+/// only support the file browser + single-file / folder upload and
+/// download (no exec, no compare yet).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Protocol {
+    #[default]
+    Ssh,
+    Ftp,
+    /// FTP with explicit TLS (AUTH TLS).
+    Ftps,
+}
+
+impl Protocol {
+    pub fn is_ssh(&self) -> bool {
+        matches!(self, Protocol::Ssh)
+    }
+    pub fn is_ftp(&self) -> bool {
+        matches!(self, Protocol::Ftp | Protocol::Ftps)
+    }
+}
+
+/// A remote server profile — SSH, FTP, or FTPS.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Server {
     pub id: Uuid,
@@ -59,10 +82,14 @@ pub struct Server {
     pub port: u16,
     pub user: String,
     pub auth: AuthMethod,
+    /// Backward-compatible: pre-existing vaults have no `protocol` field
+    /// and default to SSH.
+    #[serde(default)]
+    pub protocol: Protocol,
 
     /// SHA-256 fingerprint of the server's host key, pinned after first
     /// successful connection. Mismatch on subsequent connections triggers
-    /// a warning (MITM protection).
+    /// a warning (MITM protection). Only applies to SSH.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_key_fingerprint: Option<String>,
 }
@@ -159,6 +186,7 @@ pub struct ServerSummary {
     pub port: u16,
     pub user: String,
     pub auth_kind: &'static str,
+    pub protocol: Protocol,
     pub has_fingerprint: bool,
 }
 
@@ -174,6 +202,7 @@ impl From<&Server> for ServerSummary {
                 AuthMethod::Password { .. } => "password",
                 AuthMethod::PrivateKey { .. } => "key",
             },
+            protocol: s.protocol,
             has_fingerprint: s.host_key_fingerprint.is_some(),
         }
     }
