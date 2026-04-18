@@ -164,7 +164,7 @@ export function ServicePanel({ sessionId }: Props) {
               <th className="px-3 py-1.5 text-left font-medium">
                 Description
               </th>
-              <th className="w-28 px-3 py-1.5 text-right font-medium">
+              <th className="w-64 px-3 py-1.5 text-right font-medium">
                 Actions
               </th>
             </tr>
@@ -188,31 +188,34 @@ export function ServicePanel({ sessionId }: Props) {
                   {s.description}
                 </td>
                 <td className="px-3 py-1.5 text-right">
-                  <div className="inline-flex gap-1">
-                    <button
-                      title="Start"
+                  <div className="inline-flex flex-wrap justify-end gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
                       disabled={!canAct || busyAction !== null}
-                      className="rounded p-1 hover:bg-background disabled:opacity-30"
                       onClick={() => void act(s.unit, "start")}
                     >
-                      <Play className="h-3.5 w-3.5 text-green-600" />
-                    </button>
-                    <button
-                      title="Restart"
+                      <Play className="mr-1 h-3 w-3 text-green-600" />
+                      Start
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
                       disabled={!canAct || busyAction !== null}
-                      className="rounded p-1 hover:bg-background disabled:opacity-30"
                       onClick={() => void act(s.unit, "restart")}
                     >
-                      <RefreshCcw className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      title="Stop"
+                      <RefreshCcw className="mr-1 h-3 w-3" />
+                      Restart
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
                       disabled={!canAct || busyAction !== null}
-                      className="rounded p-1 hover:bg-background disabled:opacity-30"
                       onClick={() => void act(s.unit, "stop")}
                     >
-                      <StopCircle className="h-3.5 w-3.5 text-destructive" />
-                    </button>
+                      <StopCircle className="mr-1 h-3 w-3 text-destructive" />
+                      Stop
+                    </Button>
                   </div>
                 </td>
               </tr>

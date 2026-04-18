@@ -254,6 +254,32 @@ export interface ServiceStatus {
 
 export type DockerAction = "up" | "down" | "restart" | "build" | "pull" | "run_rm";
 
+// ---------- Server metrics ----------
+
+export interface DiskUsage {
+  mount: string;
+  total_kb: number;
+  used_kb: number;
+  fs: string;
+}
+
+export interface NetIface {
+  name: string;
+  rx_bytes: number;
+  tx_bytes: number;
+}
+
+export interface Metrics {
+  loadavg: [number, number, number] | null;
+  uptime_secs: number | null;
+  mem_total_kb: number | null;
+  mem_available_kb: number | null;
+  disks: DiskUsage[];
+  cpu_percent: number | null;
+  net: NetIface[];
+  raw: string | null;
+}
+
 // ---------- Session capabilities ----------
 
 export interface SessionCapabilities {

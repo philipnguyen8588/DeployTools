@@ -94,6 +94,8 @@ pub fn run() {
             // Services (systemd)
             commands::services::service_list,
             commands::services::service_action,
+            // Metrics
+            commands::metrics::fetch_metrics,
             // Docker Compose
             commands::docker::docker_compose_info,
             commands::docker::docker_compose_ps,

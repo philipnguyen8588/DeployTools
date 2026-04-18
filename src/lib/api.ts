@@ -11,6 +11,7 @@ import type {
   ComposeService,
   DockerAction,
   DockerInfo,
+  Metrics,
   FileComparison,
   FolderCompareResult,
   GitCommit,
@@ -171,6 +172,10 @@ export const snippetRun = (
   snippetId: UUID,
   vars: Record<string, string>,
 ) => invoke<number>("snippet_run", { sessionId, snippetId, vars });
+
+// --- Metrics ---
+export const fetchMetrics = (sessionId: string) =>
+  invoke<Metrics>("fetch_metrics", { sessionId });
 
 // --- Services (systemd) ---
 export const serviceList = (sessionId: string) =>

@@ -6,6 +6,7 @@ pub mod cloudflare;
 pub mod deploy;
 pub mod docker;
 pub mod git;
+pub mod metrics;
 pub mod project;
 pub mod services;
 pub mod snippets;

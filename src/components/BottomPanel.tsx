@@ -7,6 +7,7 @@ import {
   GitBranch,
   Container,
   Cog,
+  Activity as ActivityIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +16,7 @@ import { ActivityConsole } from "./ActivityConsole";
 import { GitPanel } from "./GitPanel";
 import { DockerPanel } from "./DockerPanel";
 import { ServicePanel } from "./ServicePanel";
+import { MetricsPanel } from "./MetricsPanel";
 
 interface Props {
   sessionId: string;
@@ -22,21 +24,29 @@ interface Props {
   projectRemoteBase?: string | null;
 }
 
-type BottomTab =
-  | { kind: "terminal"; id: string; label: string }
-  | { kind: "activity"; id: "activity"; label: "Activity" }
-  | { kind: "git"; id: "git"; label: "Git" }
-  | { kind: "docker"; id: "docker"; label: "Docker" }
-  | { kind: "services"; id: "services"; label: "Services" };
+type TabKind =
+  | "terminal"
+  | "git"
+  | "docker"
+  | "services"
+  | "resources"
+  | "activity";
+
+interface BottomTab {
+  kind: TabKind;
+  id: string;
+  label: string;
+}
 
 /**
- * The bottom half of each server tab: a tab-strip with N terminals +
- * an Activity log. The "+" button spawns a new terminal tab that opens
- * another shell channel on the same SSH session (no extra TCP/SSH
- * handshake).
+ * Bottom panel layout. Tab order is:
  *
- * All inactive tabs remain mounted with `display: none` so their state
- * (terminal buffer, scrollback, activity history) survives tab switching.
+ *   Terminal 1 | Terminal 2 | … | [+]  |  Git  |  Docker  |  Services  |  Resources  |  Activity
+ *
+ * Terminal tabs are first so they're the default landing. The "+" button
+ * creates another terminal in the same SSH session (new shell channel —
+ * no extra TCP handshake). All tabs stay mounted so their state survives
+ * switching.
  */
 export function BottomPanel({
   sessionId,
@@ -59,8 +69,6 @@ export function BottomPanel({
   function closeTerminal(id: string) {
     setTerminalTabs((prev) => {
       const remaining = prev.filter((t) => t.id !== id);
-      // If closing the active tab, switch to the last remaining terminal
-      // or fall back to the activity tab.
       if (active === id) {
         setActive(remaining[remaining.length - 1]?.id ?? "activity");
       }
@@ -68,80 +76,64 @@ export function BottomPanel({
     });
   }
 
-  const allTabs: BottomTab[] = [
+  const ordered: BottomTab[] = [
     ...terminalTabs.map((t) => ({
       kind: "terminal" as const,
       id: t.id,
       label: t.label,
     })),
-    { kind: "activity", id: "activity", label: "Activity" },
     ...(projectId
-      ? ([
-          { kind: "docker", id: "docker", label: "Docker" },
-          { kind: "git", id: "git", label: "Git" },
-        ] as BottomTab[])
+      ? [
+          { kind: "git" as const, id: "git", label: "Git" },
+          { kind: "docker" as const, id: "docker", label: "Docker" },
+        ]
       : []),
     { kind: "services", id: "services", label: "Services" },
+    { kind: "resources", id: "resources", label: "Resources" },
+    { kind: "activity", id: "activity", label: "Activity" },
   ];
 
   return (
     <div className="flex h-full flex-col">
       {/* Tab strip */}
-      <div className="flex items-center gap-0.5 border-b bg-card px-1 py-1">
-        {allTabs.map((t) => {
+      <div className="flex items-center gap-0.5 overflow-x-auto border-b bg-card px-1 py-1">
+        {ordered.map((t, idx) => {
+          // Insert "+" button immediately after the last terminal tab.
+          const isLastTerminal =
+            t.kind === "terminal" &&
+            (ordered[idx + 1]?.kind ?? "") !== "terminal";
           const isActive = active === t.id;
-          const Icon =
-            t.kind === "terminal"
-              ? TerminalSquare
-              : t.kind === "git"
-                ? GitBranch
-                : t.kind === "docker"
-                  ? Container
-                  : t.kind === "services"
-                    ? Cog
-                    : ScrollText;
+          const Icon = iconFor(t.kind);
           return (
-            <div
+            <TabChip
               key={t.id}
-              role="tab"
-              aria-selected={isActive}
-              className={cn(
-                "group flex min-w-0 cursor-pointer select-none items-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-xs transition",
-                isActive
-                  ? "border-border bg-background font-medium text-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-accent",
-              )}
-              onClick={() => setActive(t.id)}
-            >
-              <Icon className="h-3 w-3 shrink-0" />
-              <span className="truncate">{t.label}</span>
-              {t.kind === "terminal" && terminalTabs.length > 0 && (
-                <button
-                  aria-label="Close terminal"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeTerminal(t.id);
-                  }}
-                  className="rounded p-0.5 opacity-0 hover:bg-muted group-hover:opacity-100"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
+              active={isActive}
+              onActivate={() => setActive(t.id)}
+              onClose={
+                t.kind === "terminal"
+                  ? () => closeTerminal(t.id)
+                  : undefined
+              }
+              Icon={Icon}
+              label={t.label}
+              after={
+                isLastTerminal && (
+                  <button
+                    onClick={newTerminal}
+                    aria-label="New terminal"
+                    title="New terminal"
+                    className="ml-1 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                )
+              }
+            />
           );
         })}
-
-        <button
-          onClick={newTerminal}
-          aria-label="New terminal"
-          title="New terminal"
-          className="ml-1 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </button>
       </div>
 
-      {/* Content — keep all panes mounted so state survives switching */}
+      {/* Content — keep everything mounted */}
       <div className="relative min-h-0 flex-1">
         {terminalTabs.map((t) => (
           <div
@@ -154,52 +146,115 @@ export function BottomPanel({
             <Terminal sessionId={sessionId} />
           </div>
         ))}
-        <div
-          className={cn(
-            "absolute inset-0",
-            active === "activity" ? "block" : "hidden",
-          )}
-        >
-          <ActivityConsole sessionId={sessionId} projectId={projectId} />
-        </div>
+
         {projectId && (
           <>
-            <div
-              className={cn(
-                "absolute inset-0",
-                active === "git" ? "block" : "hidden",
-              )}
-            >
+            <Pane visible={active === "git"}>
               <GitPanel
                 projectId={projectId}
                 sessionId={sessionId}
                 remoteBase={projectRemoteBase ?? "/"}
               />
-            </div>
-            <div
-              className={cn(
-                "absolute inset-0",
-                active === "docker" ? "block" : "hidden",
-              )}
-            >
+            </Pane>
+            <Pane visible={active === "docker"}>
               <DockerPanel sessionId={sessionId} projectId={projectId} />
-            </div>
+            </Pane>
           </>
         )}
-        <div
-          className={cn(
-            "absolute inset-0",
-            active === "services" ? "block" : "hidden",
-          )}
-        >
+
+        <Pane visible={active === "services"}>
           <ServicePanel sessionId={sessionId} />
-        </div>
+        </Pane>
+        <Pane visible={active === "resources"}>
+          <MetricsPanel sessionId={sessionId} active={active === "resources"} />
+        </Pane>
+        <Pane visible={active === "activity"}>
+          <ActivityConsole sessionId={sessionId} projectId={projectId} />
+        </Pane>
       </div>
     </div>
   );
 }
 
-/** Counter hook returning a stable getter that always yields an increasing number. */
+function Pane({
+  visible,
+  children,
+}: {
+  visible: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={cn("absolute inset-0", visible ? "block" : "hidden")}>
+      {children}
+    </div>
+  );
+}
+
+function TabChip({
+  active,
+  onActivate,
+  onClose,
+  Icon,
+  label,
+  after,
+}: {
+  active: boolean;
+  onActivate: () => void;
+  onClose?: () => void;
+  Icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  after?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center">
+      <div
+        role="tab"
+        aria-selected={active}
+        className={cn(
+          "group flex min-w-0 cursor-pointer select-none items-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-xs transition",
+          active
+            ? "border-border bg-background font-medium text-foreground shadow-sm"
+            : "text-muted-foreground hover:bg-accent",
+        )}
+        onClick={onActivate}
+      >
+        <Icon className="h-3 w-3 shrink-0" />
+        <span className="truncate">{label}</span>
+        {onClose && (
+          <button
+            aria-label="Close"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+            className="rounded p-0.5 opacity-0 hover:bg-muted group-hover:opacity-100"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+      {after}
+    </div>
+  );
+}
+
+function iconFor(kind: TabKind) {
+  switch (kind) {
+    case "terminal":
+      return TerminalSquare;
+    case "git":
+      return GitBranch;
+    case "docker":
+      return Container;
+    case "services":
+      return Cog;
+    case "resources":
+      return ActivityIcon;
+    case "activity":
+      return ScrollText;
+  }
+}
+
 function useCounter(start: number) {
   const ref = useRefCell(start);
   return () => {

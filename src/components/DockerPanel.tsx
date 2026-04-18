@@ -24,6 +24,7 @@ import type {
 import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "./ConfirmDialog";
+import { DockerLogDialog } from "./DockerLogDialog";
 
 interface Props {
   sessionId: string;
@@ -40,7 +41,7 @@ export function DockerPanel({ sessionId, projectId }: Props) {
   const [statuses, setStatuses] = useState<ServiceStatus[]>([]);
   const [caps, setCaps] = useState<SessionCapabilities | null>(null);
   const [busy, setBusy] = useState(false);
-  const [followingFor, setFollowingFor] = useState<Set<string>>(new Set());
+  const [logsFor, setLogsFor] = useState<string | null>(null);
   const confirm = useConfirm();
 
   const loadInfo = useCallback(async () => {
@@ -159,27 +160,8 @@ export function DockerPanel({ sessionId, projectId }: Props) {
     }
   }
 
-  async function toggleFollow(service: string) {
-    if (followingFor.has(service)) {
-      try {
-        await api.dockerComposeLogsStop(sessionId, service);
-      } catch {
-        /* ignore */
-      }
-      setFollowingFor((s) => {
-        const next = new Set(s);
-        next.delete(service);
-        return next;
-      });
-    } else {
-      try {
-        await api.dockerComposeLogsFollow(sessionId, projectId, service);
-        setFollowingFor((s) => new Set(s).add(service));
-        toast.info(`Tailing logs: ${service} — see Activity`);
-      } catch (e) {
-        toast.error(`${e}`);
-      }
-    }
+  function openLogs(service: string) {
+    setLogsFor(service);
   }
 
   async function execShell(service: string) {
@@ -281,6 +263,15 @@ export function DockerPanel({ sessionId, projectId }: Props) {
         </Button>
       </div>
 
+      {logsFor && (
+        <DockerLogDialog
+          sessionId={sessionId}
+          projectId={projectId}
+          service={logsFor}
+          onClose={() => setLogsFor(null)}
+        />
+      )}
+
       <div className="min-h-0 flex-1 overflow-y-auto">
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-muted/50 text-muted-foreground">
@@ -297,10 +288,9 @@ export function DockerPanel({ sessionId, projectId }: Props) {
                 key={svc.name}
                 svc={svc}
                 status={status}
-                following={followingFor.has(svc.name)}
                 onAction={runAction}
                 onOneOff={() => runOneOff(svc.name)}
-                onToggleFollow={() => toggleFollow(svc.name)}
+                onOpenLogs={() => openLogs(svc.name)}
                 onExecShell={() => execShell(svc.name)}
                 busy={busy}
               />
@@ -315,23 +305,21 @@ export function DockerPanel({ sessionId, projectId }: Props) {
 function Row({
   svc,
   status,
-  following,
   onAction,
   onOneOff,
-  onToggleFollow,
+  onOpenLogs,
   onExecShell,
   busy,
 }: {
   svc: ComposeService;
   status?: ServiceStatus;
-  following: boolean;
   onAction: (
     action: "up" | "down" | "restart" | "build" | "pull",
     service?: string,
     needsConfirm?: boolean,
   ) => void;
   onOneOff: () => void;
-  onToggleFollow: () => void;
+  onOpenLogs: () => void;
   onExecShell: () => void;
   busy: boolean;
 }) {
@@ -402,61 +390,62 @@ function Row({
         )}
       </td>
       <td className="px-3 py-1.5 text-right">
-        <div className="inline-flex gap-1">
+        <div className="inline-flex flex-wrap justify-end gap-1">
           {svc.is_oneoff ? (
-            <button
-              title="Run --rm"
+            <Button
+              size="sm"
               disabled={busy}
-              className="rounded p-1 text-primary hover:bg-background"
               onClick={onOneOff}
             >
-              <Play className="h-3.5 w-3.5" />
-            </button>
+              <Play className="mr-1 h-3 w-3" />
+              Run
+            </Button>
           ) : (
             <>
-              <button
-                title="Up"
+              <Button
+                size="sm"
+                variant="outline"
                 disabled={busy}
-                className="rounded p-1 hover:bg-background"
                 onClick={() => onAction("up", svc.name, false)}
               >
-                <ArrowUp className="h-3.5 w-3.5" />
-              </button>
-              <button
-                title="Restart"
+                <ArrowUp className="mr-1 h-3 w-3" />
+                Up
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
                 disabled={busy}
-                className="rounded p-1 hover:bg-background"
                 onClick={() => onAction("restart", svc.name, true)}
               >
-                <RefreshCcw className="h-3.5 w-3.5" />
-              </button>
-              <button
-                title="Build"
+                <RefreshCcw className="mr-1 h-3 w-3" />
+                Restart
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
                 disabled={busy}
-                className="rounded p-1 hover:bg-background"
                 onClick={() => onAction("build", svc.name, false)}
               >
-                <Hammer className="h-3.5 w-3.5" />
-              </button>
-              <button
-                title={following ? "Stop tailing logs" : "Tail logs"}
-                className="rounded p-1 hover:bg-background"
-                onClick={onToggleFollow}
+                <Hammer className="mr-1 h-3 w-3" />
+                Build
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onOpenLogs}
               >
-                {following ? (
-                  <StopCircle className="h-3.5 w-3.5 text-destructive" />
-                ) : (
-                  <ScrollText className="h-3.5 w-3.5" />
-                )}
-              </button>
-              <button
-                title="Exec shell"
+                <ScrollText className="mr-1 h-3 w-3" />
+                Logs
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
                 disabled={!isRunning}
-                className="rounded p-1 hover:bg-background disabled:opacity-30"
                 onClick={onExecShell}
               >
-                <TerminalSquare className="h-3.5 w-3.5" />
-              </button>
+                <TerminalSquare className="mr-1 h-3 w-3" />
+                Shell
+              </Button>
             </>
           )}
         </div>
