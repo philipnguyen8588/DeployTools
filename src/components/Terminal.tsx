@@ -85,6 +85,9 @@ export function Terminal({ sessionId }: Props) {
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 5000,
+      // Disable xterm's built-in right-click selection so we can use
+      // right-click for paste (Windows convention).
+      rightClickSelectsWord: false,
       theme: resolvedTheme === "dark" ? THEME_DARK : THEME_LIGHT,
     });
     const fit = new FitAddon();
@@ -92,6 +95,30 @@ export function Terminal({ sessionId }: Props) {
     term.loadAddon(new WebLinksAddon());
     term.open(containerRef.current);
     termRef.current = term;
+
+    // --- Copy on select, paste on right-click ---
+    // Selecting text auto-copies to the clipboard (putty/xterm behavior).
+    term.onSelectionChange(() => {
+      const sel = term.getSelection();
+      if (sel) {
+        void navigator.clipboard.writeText(sel).catch(() => {});
+      }
+    });
+    // Right-click pastes clipboard contents as input bytes.
+    const onContext = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void navigator.clipboard
+        .readText()
+        .then((txt) => {
+          if (!txt) return;
+          term.paste(txt);
+        })
+        .catch(() => {
+          /* clipboard empty or not permitted */
+        });
+    };
+    containerRef.current.addEventListener("contextmenu", onContext);
 
     // Fit, then open the backend terminal with matching cols/rows.
     fit.fit();
@@ -153,6 +180,7 @@ export function Terminal({ sessionId }: Props) {
       ro.disconnect();
       unlistenData?.();
       unlistenExit?.();
+      containerRef.current?.removeEventListener("contextmenu", onContext);
       if (terminalIdRef.current) {
         void api.termClose(sessionId, terminalIdRef.current).catch(() => {});
       }

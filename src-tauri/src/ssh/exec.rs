@@ -221,6 +221,17 @@ pub async fn run_with_pty(
 
 // --- internals ---
 
+/// PATH preamble prepended to every remote command. SSH exec channels
+/// don't source the user's login profile, so their `PATH` is whatever
+/// sshd hands out (often `/usr/bin:/bin` only). That misses common
+/// install locations for docker (`/usr/local/bin`) and Homebrew
+/// (`/home/linuxbrew/.linuxbrew/bin`). Prepend a sane default plus the
+/// user's `$HOME/.local/bin` and keep whatever the server provided.
+const PATH_PREAMBLE: &str = concat!(
+    "export PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:",
+    "/sbin:/bin:$HOME/.local/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}\"; "
+);
+
 async fn open_channel(
     session: &Arc<SshSession>,
     command: &str,
@@ -239,8 +250,9 @@ async fn open_channel(
             .await
             .map_err(|e| AppError::Ssh(format!("request_pty: {e}")))?;
     }
+    let full = format!("{PATH_PREAMBLE}{command}");
     channel
-        .exec(true, command)
+        .exec(true, full)
         .await
         .map_err(|e| AppError::Ssh(format!("exec: {e}")))?;
     Ok((channel, ()))

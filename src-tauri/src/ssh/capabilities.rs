@@ -49,21 +49,32 @@ pub async fn probe(session: Arc<SshSession>) -> SessionCapabilities {
         exec::run_capturing(s4, None, &cmd_root, 64),
     );
 
-    let (compose_ok, compose_ver) = match compose {
-        Ok((stdout, _, 0)) => {
+    // Some OpenSSH servers never send an ExitStatus, so we prefer
+    // stdout-based detection over exit code when the command is
+    // supposed to print something.
+    let (compose_ok, compose_ver) = match &compose {
+        Ok((stdout, _, _)) => {
             let v = stdout.trim().to_string();
-            (true, if v.is_empty() { None } else { Some(v) })
+            if v.is_empty() {
+                (false, None)
+            } else {
+                (true, Some(v))
+            }
         }
         _ => (false, None),
+    };
+    let systemctl_ok = match &systemd {
+        Ok((stdout, _, _)) => !stdout.trim().is_empty(),
+        _ => false,
     };
 
     SessionCapabilities {
         compose_v2: Some(compose_ok),
         compose_version: compose_ver,
         passwordless_sudo: Some(matches!(sudo, Ok((_, _, 0)))),
-        has_systemctl: Some(matches!(systemd, Ok((_, _, 0)))),
-        is_root: Some(match root {
-            Ok((stdout, _, 0)) => stdout.trim() == "0",
+        has_systemctl: Some(systemctl_ok),
+        is_root: Some(match &root {
+            Ok((stdout, _, _)) => stdout.trim() == "0",
             _ => false,
         }),
     }
