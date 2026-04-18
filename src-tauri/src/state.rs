@@ -1,0 +1,98 @@
+//! Global app state shared across all Tauri commands.
+
+use std::sync::Arc;
+
+use dashmap::DashMap;
+use tauri::{AppHandle, Manager};
+use tokio::sync::oneshot;
+
+use crate::ssh::session_pool::{SessionId, SessionPool};
+use crate::vault::Vault;
+
+/// What kind of command is currently occupying a session. Used to
+/// decide whether to reject a new request or allow it to coexist.
+#[derive(Debug, Clone)]
+pub enum InflightKind {
+    /// Mutates state on the remote (docker up/down, service restart,
+    /// snippet run, …). At most one per session.
+    Mutating(String),
+    /// Read-only, long-lived stream (docker logs -f). Any number allowed
+    /// as long as the `(session, tag)` tuple is unique.
+    Follow(String),
+}
+
+pub struct AppState {
+    pub app: AppHandle,
+    pub vault: Arc<Vault>,
+    pub sessions: Arc<SessionPool>,
+
+    /// Mutating command currently running on a session, if any.
+    pub inflight: Arc<DashMap<SessionId, InflightKind>>,
+
+    /// Cancellation senders for follow-mode streams, keyed by the same
+    /// (session, tag) pair frontend uses for filter chips.
+    pub follow_cancellers: Arc<DashMap<(SessionId, String), oneshot::Sender<()>>>,
+}
+
+impl AppState {
+    pub fn new(app: AppHandle) -> Self {
+        // Vault file lives at `%APPDATA%\com.deploytools.app\vault.enc`
+        // on Windows (resolved via the Tauri path resolver).
+        let data_dir = app
+            .path()
+            .app_data_dir()
+            .expect("resolve app_data_dir");
+        let vault_path = data_dir.join("vault.enc");
+
+        Self {
+            app,
+            vault: Arc::new(Vault::new(vault_path)),
+            sessions: Arc::new(SessionPool::new()),
+            inflight: Arc::new(DashMap::new()),
+            follow_cancellers: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Acquire an inflight slot for a session. Returns a `InflightGuard`
+    /// that releases on drop. Returns `Err(CommandInFlight)` if the
+    /// session already has a mutating command running.
+    pub fn acquire_mutating(
+        &self,
+        session_id: &str,
+        what: String,
+    ) -> crate::errors::AppResult<InflightGuard> {
+        if self.inflight.contains_key(session_id) {
+            return Err(crate::errors::AppError::CommandInFlight(
+                self.inflight
+                    .get(session_id)
+                    .map(|k| match k.value() {
+                        InflightKind::Mutating(s) => s.clone(),
+                        InflightKind::Follow(s) => s.clone(),
+                    })
+                    .unwrap_or_default(),
+            ));
+        }
+        self.inflight
+            .insert(session_id.to_string(), InflightKind::Mutating(what));
+        Ok(InflightGuard {
+            map: self.inflight.clone(),
+            session_id: session_id.to_string(),
+        })
+    }
+}
+
+/// RAII guard releasing the inflight slot on drop.
+pub struct InflightGuard {
+    map: Arc<DashMap<SessionId, InflightKind>>,
+    session_id: SessionId,
+}
+
+impl Drop for InflightGuard {
+    fn drop(&mut self) {
+        self.map.remove(&self.session_id);
+    }
+}
+
+/// Trait impl needed by `app.path()` in the rsync runner and a few other
+/// spots — re-export `Manager` there instead of everywhere.
+pub use tauri::Manager as _Manager;
