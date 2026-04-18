@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Plus,
   X,
@@ -54,17 +54,39 @@ export function BottomPanel({
   projectRemoteBase,
 }: Props) {
   const [terminalTabs, setTerminalTabs] = useState<
-    { id: string; label: string }[]
+    { id: string; label: string; seed?: string }[]
   >(() => [{ id: `t-${Date.now()}-1`, label: "Terminal 1" }]);
   const [active, setActive] = useState<string>(terminalTabs[0].id);
   const counterRef = useCounter(terminalTabs.length);
 
-  function newTerminal() {
+  function newTerminal(opts?: { label?: string; seed?: string }) {
     const n = counterRef() + 1;
     const id = `t-${Date.now()}-${n}`;
-    setTerminalTabs((t) => [...t, { id, label: `Terminal ${n}` }]);
+    setTerminalTabs((t) => [
+      ...t,
+      { id, label: opts?.label ?? `Terminal ${n}`, seed: opts?.seed },
+    ]);
     setActive(id);
   }
+
+  // Anyone in the tree (DockerPanel, SnippetRunner, …) can open a new
+  // terminal on THIS session by dispatching a `open-terminal` custom
+  // event. We scope to our own sessionId so events meant for another
+  // tab don't leak.
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const e = ev as CustomEvent<{
+        sessionId: string;
+        label?: string;
+        seed?: string;
+      }>;
+      if (!e.detail || e.detail.sessionId !== sessionId) return;
+      newTerminal({ label: e.detail.label, seed: e.detail.seed });
+    };
+    window.addEventListener("open-terminal", handler);
+    return () => window.removeEventListener("open-terminal", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
 
   function closeTerminal(id: string) {
     setTerminalTabs((prev) => {
@@ -119,7 +141,7 @@ export function BottomPanel({
               after={
                 isLastTerminal && (
                   <button
-                    onClick={newTerminal}
+                    onClick={() => newTerminal()}
                     aria-label="New terminal"
                     title="New terminal"
                     className="ml-1 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -143,7 +165,7 @@ export function BottomPanel({
               active === t.id ? "block" : "hidden",
             )}
           >
-            <Terminal sessionId={sessionId} />
+            <Terminal sessionId={sessionId} seed={t.seed} />
           </div>
         ))}
 

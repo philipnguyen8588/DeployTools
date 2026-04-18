@@ -24,7 +24,7 @@ import type {
 import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "./ConfirmDialog";
-import { DockerLogDialog } from "./DockerLogDialog";
+import { useProjects } from "@/stores/projects";
 
 interface Props {
   sessionId: string;
@@ -41,8 +41,12 @@ export function DockerPanel({ sessionId, projectId }: Props) {
   const [statuses, setStatuses] = useState<ServiceStatus[]>([]);
   const [caps, setCaps] = useState<SessionCapabilities | null>(null);
   const [busy, setBusy] = useState(false);
-  const [logsFor, setLogsFor] = useState<string | null>(null);
   const confirm = useConfirm();
+  const project = useProjects((s) =>
+    s.projects.find((p) => p.id === projectId),
+  );
+  /** Remote working directory where `docker compose …` should run. */
+  const remoteDir = project?.remote_path ?? null;
 
   const loadInfo = useCallback(async () => {
     try {
@@ -160,17 +164,53 @@ export function DockerPanel({ sessionId, projectId }: Props) {
     }
   }
 
+  /**
+   * Open a new terminal tab and run `docker compose logs -f <service> -n 100`
+   * inside it. The user can stop with Ctrl+C or by closing the tab —
+   * nothing streams into the Activity feed.
+   */
   function openLogs(service: string) {
-    setLogsFor(service);
+    if (!info?.compose_path) {
+      toast.error("Compose file not loaded yet");
+      return;
+    }
+    // Prefer cd'ing into the compose directory on the REMOTE — we
+    // approximate it from the project record we already have. A mild
+    // limitation: the sub-directory case (compose_file override) is
+    // resolved remotely, so we also fall back to `-f <compose_file>`
+    // if cd alone doesn't work. Keep it simple: cd to remote root.
+    const cd = remoteDir ? `cd ${shellQuote(remoteDir)} && ` : "";
+    const cmd = `${cd}docker compose logs -f ${shellQuote(service)} -n 100`;
+    window.dispatchEvent(
+      new CustomEvent("open-terminal", {
+        detail: {
+          sessionId,
+          label: `logs: ${service}`,
+          seed: cmd,
+        },
+      }),
+    );
   }
 
-  async function execShell(service: string) {
-    try {
-      await api.dockerComposeExecShell(sessionId, projectId, service);
-      toast.success(`Opened shell into ${service} — check Terminal tabs`);
-    } catch (e) {
-      toast.error(`${e}`);
-    }
+  /**
+   * Open a new terminal tab running an interactive shell inside the
+   * container. We try `bash` and fall back to `sh` at the container
+   * level (Alpine images only have `sh`).
+   */
+  function execShell(service: string) {
+    const cd = remoteDir ? `cd ${shellQuote(remoteDir)} && ` : "";
+    const seed =
+      `${cd}docker compose exec ${shellQuote(service)} ` +
+      `sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh'`;
+    window.dispatchEvent(
+      new CustomEvent("open-terminal", {
+        detail: {
+          sessionId,
+          label: `shell: ${service}`,
+          seed,
+        },
+      }),
+    );
   }
 
   // --- empty / error states ---
@@ -293,15 +333,6 @@ export function DockerPanel({ sessionId, projectId }: Props) {
         </Button>
       </div>
 
-      {logsFor && (
-        <DockerLogDialog
-          sessionId={sessionId}
-          projectId={projectId}
-          service={logsFor}
-          onClose={() => setLogsFor(null)}
-        />
-      )}
-
       <div className="min-h-0 flex-1 overflow-y-auto">
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-muted/50 text-muted-foreground">
@@ -330,6 +361,11 @@ export function DockerPanel({ sessionId, projectId }: Props) {
       </div>
     </div>
   );
+}
+
+/** Minimal POSIX single-quote for a shell-seeded command. */
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 function Row({

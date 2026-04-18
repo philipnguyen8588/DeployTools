@@ -9,6 +9,12 @@ import * as api from "@/lib/api";
 
 interface Props {
   sessionId: string;
+  /**
+   * Optional command to feed into the shell immediately after the PTY
+   * is ready. The string is sent verbatim (no shell quoting) followed
+   * by a newline. Used to seed "tail logs" / "exec shell" tabs.
+   */
+  seed?: string;
 }
 
 /** Dracula-ish palette for dark mode. */
@@ -59,7 +65,7 @@ const THEME_LIGHT = {
   brightWhite: "#8c959f",
 };
 
-export function Terminal({ sessionId }: Props) {
+export function Terminal({ sessionId, seed }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const terminalIdRef = useRef<string | null>(null);
@@ -132,6 +138,18 @@ export function Terminal({ sessionId }: Props) {
           return;
         }
         terminalIdRef.current = tid;
+
+        // Send the seeded command once the shell is ready. We wait a
+        // short tick for the server to paint the first prompt so our
+        // command doesn't land before the PS1 is drawn.
+        if (seed) {
+          const payload = seed.endsWith("\n") ? seed : `${seed}\n`;
+          window.setTimeout(() => {
+            if (!disposed && terminalIdRef.current) {
+              void api.termWrite(sessionId, terminalIdRef.current, payload);
+            }
+          }, 250);
+        }
 
         unlistenData = await listen<number[] | Uint8Array>(
           `term://${tid}`,
