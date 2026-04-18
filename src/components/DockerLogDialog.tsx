@@ -8,8 +8,8 @@ import {
   Trash2,
   Download,
   Search,
+  AlertTriangle,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import * as api from "@/lib/api";
 import type { ActivityLine } from "@/lib/types";
@@ -44,8 +44,12 @@ export function DockerLogDialog({
   const [lines, setLines] = useState<string[]>([]);
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(false);
+  // Guard against React StrictMode's double-invocation of effects in
+  // dev: we only want ONE follow stream per dialog, not two.
+  const startedRef = useRef(false);
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -54,9 +58,17 @@ export function DockerLogDialog({
   useEffect(() => {
     const unlisteners: UnlistenFn[] = [];
     let alive = true;
+    // Skip the second invocation in dev StrictMode — otherwise we
+    // fire two `logs_follow` calls and the second one races against
+    // its own cancellation.
+    if (startedRef.current) {
+      return () => {
+        /* noop cleanup for the dupe pass */
+      };
+    }
+    startedRef.current = true;
 
     (async () => {
-      // Listen for single-line events (rare for logs) + batched ones.
       unlisteners.push(
         await listen<ActivityLine>(
           `activity://session/${sessionId}`,
@@ -83,12 +95,13 @@ export function DockerLogDialog({
         ),
       );
 
-      // Kick off the stream.
       try {
         await api.dockerComposeLogsFollow(sessionId, projectId, service);
       } catch (e) {
-        toast.error(`${e}`);
-        onClose();
+        // Keep the dialog open and show the error inline — user needs
+        // the full message (e.g. "Compose V2 not found") and a chance
+        // to copy it, not a half-second toast flash.
+        if (alive) setError(String(e));
       }
     })();
 
@@ -191,7 +204,14 @@ export function DockerLogDialog({
             "min-h-0 flex-1 overflow-y-auto rounded bg-[#0a0e14] p-2 font-mono text-[11.5px] leading-5 text-[#e6edf3]",
           )}
         >
-          {shown.length === 0 ? (
+          {error ? (
+            <div className="flex h-full items-center justify-center p-4">
+              <div className="max-w-md rounded border border-destructive/50 bg-destructive/10 p-4 text-center text-sm text-destructive">
+                <AlertTriangle className="mx-auto mb-2 h-5 w-5" />
+                <div className="whitespace-pre-wrap">{error}</div>
+              </div>
+            </div>
+          ) : shown.length === 0 ? (
             <div className="py-6 text-center text-muted-foreground">
               Waiting for output…
             </div>

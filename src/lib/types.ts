@@ -284,8 +284,10 @@ export interface Metrics {
 
 export interface SessionCapabilities {
   compose_v2: boolean | null;
+  compose_v1: boolean | null;
   passwordless_sudo: boolean | null;
   has_systemctl: boolean | null;
   is_root: boolean | null;
   compose_version: string | null;
+  probe_stderr: string | null;
 }

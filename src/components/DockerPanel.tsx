@@ -193,15 +193,45 @@ export function DockerPanel({ sessionId, projectId }: Props) {
     );
   }
   if (caps && caps.compose_v2 === false) {
+    const isV1 = caps.compose_v1 === true;
     return (
-      <div className="flex h-full items-center justify-center p-4 text-center text-xs text-yellow-600 dark:text-yellow-400">
-        <div>
-          <AlertTriangle className="mx-auto mb-2 h-6 w-6" />
-          Docker Compose V2 not installed on the server.
-          <div className="mt-1 font-mono">
-            sudo apt install docker-compose-plugin
-          </div>
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
+        <AlertTriangle className="h-6 w-6 text-yellow-500" />
+        <div className="max-w-md text-xs text-yellow-600 dark:text-yellow-400">
+          {isV1 ? (
+            <>
+              Found <code className="font-mono">docker-compose</code> (V1
+              legacy). This app requires <strong>Docker Compose V2</strong>.
+              <div className="mt-2 font-mono">
+                sudo apt install docker-compose-plugin
+              </div>
+              <div className="mt-1">
+                (Ubuntu/Debian; use your distro's equivalent otherwise.)
+              </div>
+            </>
+          ) : (
+            <>
+              Docker Compose V2 not found on the server.
+              <div className="mt-2 font-mono">
+                sudo apt install docker-compose-plugin
+              </div>
+            </>
+          )}
         </div>
+        {caps.probe_stderr && (
+          <details className="w-full max-w-xl text-left text-[11px] text-muted-foreground">
+            <summary className="cursor-pointer hover:text-foreground">
+              Diagnostic output
+            </summary>
+            <pre className="mt-1 max-h-40 overflow-y-auto rounded bg-muted/40 p-2 font-mono">
+              {caps.probe_stderr}
+            </pre>
+          </details>
+        )}
+        <Button size="sm" variant="outline" onClick={loadCaps}>
+          <RefreshCcw className="mr-1 h-3.5 w-3.5" />
+          Re-probe
+        </Button>
       </div>
     );
   }
