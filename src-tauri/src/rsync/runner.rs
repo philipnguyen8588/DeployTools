@@ -129,7 +129,11 @@ pub async fn run(app: &AppHandle, opts: RsyncOptions<'_>) -> AppResult<i32> {
     ssh_cmd.push_str(" -o StrictHostKeyChecking=accept-new");
     match &server.auth {
         AuthMethod::PrivateKey { key_path, .. } => {
-            ssh_cmd.push_str(&format!(" -i \"{}\"", key_path.to_string_lossy()));
+            // rsync's `-i` expects a file path — inline PEM isn't
+            // supported here. The UI still allows pasting an inline
+            // key for SSH/SFTP; if the user later enables rsync flows
+            // the connection will error clearly ("file not found").
+            ssh_cmd.push_str(&format!(" -i \"{}\"", key_path));
         }
         AuthMethod::Password { .. } => {
             // rsync over ssh with password auth requires an external

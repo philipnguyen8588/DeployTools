@@ -48,9 +48,38 @@ pub async fn snippet_delete(id: Uuid, state: State<'_, AppState>) -> AppResult<(
         .await
 }
 
-/// Run a snippet on an existing session. `vars` supplies values for
-/// user-declared variables; built-ins (HOST/USER/PORT/…) are filled in
-/// from the session's server + project records.
+/// Resolve a snippet's command template into a concrete string using
+/// the session's built-in variables (HOST/USER/PORT/REMOTE_PATH/…) plus
+/// user-supplied values. Does NOT execute — the frontend pastes the
+/// result into the interactive terminal so the user sees it in their
+/// shell and hits Enter themselves.
+///
+/// This replaces the old `snippet_run` model where we exec'd the
+/// snippet over a secondary SSH channel. That model broke follow-mode
+/// commands (`docker compose logs -f …`) and forced the user to hunt
+/// for output in the Activity console. Pasting into the active
+/// terminal is what a shell user actually wants.
+#[tauri::command]
+pub async fn snippet_resolve(
+    session_id: String,
+    snippet_id: Uuid,
+    vars: HashMap<String, String>,
+    state: State<'_, AppState>,
+) -> AppResult<String> {
+    let session = state.sessions.get(&session_id)?;
+    let snippet = state
+        .vault
+        .read(|d| d.snippets.iter().find(|s| s.id == snippet_id).cloned())
+        .await?
+        .ok_or_else(|| AppError::Other(format!("snippet {snippet_id} not found")))?;
+
+    let builtins = resolve_builtins(&session, &state).await?;
+    resolve_vars(&snippet.command, &vars, &builtins)
+}
+
+/// Legacy: run a snippet via a secondary exec channel. Kept only so
+/// existing callers keep compiling; the new UI path is `snippet_resolve`
+/// + paste into the interactive terminal.
 #[tauri::command]
 pub async fn snippet_run(
     session_id: String,
@@ -65,8 +94,33 @@ pub async fn snippet_run(
         .await?
         .ok_or_else(|| AppError::Other(format!("snippet {snippet_id} not found")))?;
 
-    // Built-in variables — pulled fresh from the vault.
-    let builtins: HashMap<String, String> = state
+    let builtins = resolve_builtins(&session, &state).await?;
+    let command = resolve_vars(&snippet.command, &vars, &builtins)?;
+
+    let _guard = state.acquire_mutating(&session_id, format!("snippet: {}", snippet.name))?;
+
+    let argv = vec!["sh".to_string(), "-c".into(), command];
+    let result = exec::run_streaming(
+        session.clone(),
+        None,
+        &argv,
+        "snippet",
+        ExecOpts {
+            tag: Some(snippet.id.to_string()),
+            ..Default::default()
+        },
+        None,
+    )
+    .await?;
+    Ok(result.exit)
+}
+
+/// Pull the standard built-in variables out of the vault for a session.
+async fn resolve_builtins(
+    session: &std::sync::Arc<crate::ssh::session_pool::SshSession>,
+    state: &State<'_, AppState>,
+) -> AppResult<HashMap<String, String>> {
+    state
         .vault
         .read(|d| {
             let server = d.servers.iter().find(|s| s.id == session.server_id);
@@ -87,28 +141,7 @@ pub async fn snippet_run(
             }
             m
         })
-        .await?;
-
-    let command = resolve_vars(&snippet.command, &vars, &builtins)?;
-
-    // Guard against concurrent mutating commands on the same session.
-    let _guard = state.acquire_mutating(&session_id, format!("snippet: {}", snippet.name))?;
-
-    // Run via `sh -c` so the user's snippet can use pipelines, glob, etc.
-    let argv = vec!["sh".to_string(), "-c".into(), command];
-    let result = exec::run_streaming(
-        session.clone(),
-        None,
-        &argv,
-        "snippet",
-        ExecOpts {
-            tag: Some(snippet.id.to_string()),
-            ..Default::default()
-        },
-        None,
-    )
-    .await?;
-    Ok(result.exit)
+        .await
 }
 
 // ------ substitution + validation ------

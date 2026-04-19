@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Cog,
   Play,
   StopCircle,
   RefreshCcw,
-  Search,
   Clipboard,
   Info,
 } from "lucide-react";
@@ -13,12 +11,17 @@ import { toast } from "sonner";
 import * as api from "@/lib/api";
 import type { ServiceEntry, SessionCapabilities } from "@/lib/types";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "./ConfirmDialog";
 
 interface Props {
   sessionId: string;
+  /** Filter lifted to the shared BottomPanel toolbar. */
+  filter?: string;
+  /** Bump to trigger reload from the shared Refresh button. */
+  refreshNonce?: number;
+  /** Report loading state back to the parent so the toolbar icon spins. */
+  onBusyChange?: (busy: boolean) => void;
 }
 
 /**
@@ -26,10 +29,14 @@ interface Props {
  * a BottomPanel tab. Surfaces a clear banner if the server doesn't have
  * passwordless sudo configured for systemctl.
  */
-export function ServicePanel({ sessionId }: Props) {
+export function ServicePanel({
+  sessionId,
+  filter = "",
+  refreshNonce = 0,
+  onBusyChange,
+}: Props) {
   const [items, setItems] = useState<ServiceEntry[]>([]);
   const [caps, setCaps] = useState<SessionCapabilities | null>(null);
-  const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const confirm = useConfirm();
@@ -44,14 +51,22 @@ export function ServicePanel({ sessionId }: Props) {
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    onBusyChange?.(true);
     try {
       setItems(await api.serviceList(sessionId));
     } catch (e) {
       toast.error(`${e}`);
     } finally {
       setLoading(false);
+      onBusyChange?.(false);
     }
-  }, [sessionId]);
+  }, [sessionId, onBusyChange]);
+
+  // External refresh trigger from the shared toolbar.
+  useEffect(() => {
+    if (refreshNonce <= 0) return;
+    void refresh();
+  }, [refreshNonce, refresh]);
 
   useEffect(() => {
     void refreshCaps();
@@ -110,26 +125,8 @@ export function ServicePanel({ sessionId }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5">
-        <Cog className="h-3.5 w-3.5 text-primary" />
-        <span className="text-xs font-medium">systemd services</span>
-        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-          {items.length} running
-        </span>
-        <div className="flex-1" />
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Filter…"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="h-6 w-40 pl-6 text-xs"
-          />
-        </div>
-        <Button size="icon-sm" variant="ghost" onClick={refresh} disabled={loading}>
-          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-        </Button>
-      </div>
+      {/* Top bar removed — title, filter and refresh now live on the
+          shared BottomPanel tab strip (right side). */}
 
       {!canAct && caps && (
         <div className="flex shrink-0 items-start gap-2 border-b bg-yellow-500/10 p-2 text-xs text-yellow-700 dark:text-yellow-400">

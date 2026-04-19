@@ -43,7 +43,11 @@ pub enum AuthMethod {
         password: Secret,
     },
     PrivateKey {
-        key_path: PathBuf,
+        /// Either an absolute path to a private-key file (default) OR the
+        /// raw PEM content itself when the string starts with
+        /// "-----BEGIN". The UI lets the user paste either — the runtime
+        /// dispatches based on the prefix.
+        key_path: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         passphrase: Option<Secret>,
     },
@@ -123,6 +127,18 @@ fn default_rsync_flags() -> String {
 }
 
 /// Top-level payload that gets encrypted and written to `vault.enc`.
+/// One line the user typed into a terminal, keyed by server. Stored in
+/// the encrypted vault alongside everything else so it only exists in
+/// plaintext while the vault is unlocked.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalHistoryEntry {
+    pub id: Uuid,
+    pub server_id: Uuid,
+    pub command: String,
+    /// Milliseconds since Unix epoch.
+    pub time_ms: u64,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VaultData {
     #[serde(default)]
@@ -135,6 +151,11 @@ pub struct VaultData {
     pub cloudflare_token: Option<Secret>,
     #[serde(default)]
     pub snippets: Vec<Snippet>,
+    /// Commands the user typed into the integrated terminal, keyed by
+    /// server. Capped per server at a sane upper bound; see
+    /// `commands::history::HISTORY_CAP`.
+    #[serde(default)]
+    pub terminal_history: Vec<TerminalHistoryEntry>,
 }
 
 // ---------- Snippets ----------

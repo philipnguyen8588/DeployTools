@@ -11,10 +11,155 @@ pub mod crypto;
 pub mod store;
 
 use crate::errors::{AppError, AppResult};
-use crate::models::VaultData;
+use crate::models::{Snippet, SnippetVar, SnippetVarKind, VaultData};
 use std::path::PathBuf;
 use tokio::sync::RwLock;
+use uuid::Uuid;
 use zeroize::Zeroizing;
+
+/// Seeded snippets pre-loaded on first vault creation. These cover the
+/// very common ops workflows (Docker Compose, git pull, systemctl,
+/// log tails, disk check) so a new user has something usable out of
+/// the box. Each snippet uses the built-in `{{REMOTE_PATH}}` or the
+/// user-prompted `{{APP_NAME}}` / `{{SERVICE}}` / `{{CONTAINER}}`
+/// variable to stay project-agnostic.
+fn default_snippets() -> Vec<Snippet> {
+    let app_var = || SnippetVar {
+        key: "APP_NAME".into(),
+        label: "Compose service".into(),
+        default: None,
+        kind: SnippetVarKind::Text,
+        choices: Vec::new(),
+    };
+    let service_var = || SnippetVar {
+        key: "SERVICE".into(),
+        label: "systemd unit (e.g. nginx)".into(),
+        default: None,
+        kind: SnippetVarKind::Text,
+        choices: Vec::new(),
+    };
+    let container_var = || SnippetVar {
+        key: "CONTAINER".into(),
+        label: "Container name".into(),
+        default: None,
+        kind: SnippetVarKind::Text,
+        choices: Vec::new(),
+    };
+    vec![
+        // ---- Docker Compose ----
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "compose: logs -f".into(),
+            description: "Follow the last 100 lines of a Compose service.".into(),
+            command: "docker compose logs -f {{APP_NAME}} -n 100".into(),
+            variables: vec![app_var()],
+        },
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "compose: restart".into(),
+            description: "Restart one Compose service (in-place).".into(),
+            command: "docker compose restart {{APP_NAME}}".into(),
+            variables: vec![app_var()],
+        },
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "compose: up -d".into(),
+            description: "Start/update a Compose service in detached mode.".into(),
+            command: "docker compose up {{APP_NAME}} -d".into(),
+            variables: vec![app_var()],
+        },
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "compose: down".into(),
+            description: "Stop + remove ALL services in this project.".into(),
+            command: "docker compose down".into(),
+            variables: Vec::new(),
+        },
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "compose: build + up -d".into(),
+            description: "Rebuild image then recreate the service.".into(),
+            command:
+                "docker compose build {{APP_NAME}} && docker compose up {{APP_NAME}} -d"
+                    .into(),
+            variables: vec![app_var()],
+        },
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "compose: ps".into(),
+            description: "List Compose services + state.".into(),
+            command: "docker compose ps".into(),
+            variables: Vec::new(),
+        },
+        // ---- Docker (raw) ----
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "docker: logs -f".into(),
+            description: "Tail a container's log (by container name).".into(),
+            command: "docker logs -f --tail 100 {{CONTAINER}}".into(),
+            variables: vec![container_var()],
+        },
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "docker: system prune".into(),
+            description: "Free space: remove stopped containers + dangling images/volumes.".into(),
+            command: "docker system prune -f".into(),
+            variables: Vec::new(),
+        },
+        // ---- Git ----
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "git: pull".into(),
+            description: "Pull latest code in the project's remote dir.".into(),
+            command: "git pull --ff-only".into(),
+            variables: Vec::new(),
+        },
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "git: status".into(),
+            description: "Show working tree status.".into(),
+            command: "git status".into(),
+            variables: Vec::new(),
+        },
+        // ---- systemd ----
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "systemd: restart".into(),
+            description: "Restart a systemd unit.".into(),
+            command: "sudo systemctl restart {{SERVICE}}".into(),
+            variables: vec![service_var()],
+        },
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "systemd: status".into(),
+            description: "Show unit status + last log lines.".into(),
+            command: "sudo systemctl status {{SERVICE}} --no-pager -n 20".into(),
+            variables: vec![service_var()],
+        },
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "journal: tail".into(),
+            description: "Follow a unit's journal.".into(),
+            command: "sudo journalctl -u {{SERVICE}} -f -n 100".into(),
+            variables: vec![service_var()],
+        },
+        // ---- System ----
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "disk usage".into(),
+            description: "Show mounted filesystem usage.".into(),
+            command: "df -h".into(),
+            variables: Vec::new(),
+        },
+        Snippet {
+            id: Uuid::new_v4(),
+            name: "top processes".into(),
+            description: "Top 20 processes by memory.".into(),
+            command: "ps aux --sort=-%mem | head -21".into(),
+            variables: Vec::new(),
+        },
+    ]
+}
 
 /// Runtime vault state. Held inside `AppState` in an `Arc<Vault>`.
 pub struct Vault {
@@ -62,7 +207,8 @@ impl Vault {
     pub async fn initialize(&self, master_password: &str) -> AppResult<()> {
         let salt = crypto::random_salt();
         let key = crypto::derive_key(master_password, &salt)?;
-        let data = VaultData::default();
+        let mut data = VaultData::default();
+        data.snippets = default_snippets();
 
         store::write_vault(&self.file_path, &salt, &key, &data).await?;
 
@@ -73,20 +219,59 @@ impl Vault {
         Ok(())
     }
 
-    /// Unlock using the master password. Returns error if the password is
-    /// wrong (AES-GCM tag mismatch) or the file is corrupt.
+    /// Unlock using the master password.
+    ///
+    /// Tries the current (fast) Argon2id params first. If decryption
+    /// fails we assume it's an older vault written with the legacy
+    /// params — retry there, and on success re-encrypt the file with
+    /// the current-params key so future unlocks take the fast path.
+    /// If both derivations fail, the password is wrong.
     pub async fn unlock(&self, master_password: &str) -> AppResult<()> {
         if !self.exists().await {
             return Err(AppError::VaultNotInitialized);
         }
         let (salt, nonce, ct) = store::read_vault_parts(&self.file_path).await?;
-        let key = crypto::derive_key(master_password, &salt)?;
-        let plaintext = crypto::decrypt(&key, &nonce, &ct)
-            .map_err(|_| AppError::InvalidMasterPassword)?;
+
+        let fast_key = crypto::derive_key(master_password, &salt)?;
+        let (final_key, plaintext) =
+            match crypto::decrypt(&fast_key, &nonce, &ct) {
+                Ok(pt) => (fast_key, pt),
+                Err(_) => {
+                    // Fall back to the legacy params.
+                    let legacy_key =
+                        crypto::derive_key_legacy(master_password, &salt)?;
+                    let pt = crypto::decrypt(&legacy_key, &nonce, &ct)
+                        .map_err(|_| AppError::InvalidMasterPassword)?;
+                    // Re-derive with current params and rewrite the
+                    // vault so subsequent unlocks are fast.
+                    let data: VaultData = serde_json::from_slice(&pt)?;
+                    let new_salt = crypto::random_salt();
+                    let new_key =
+                        crypto::derive_key(master_password, &new_salt)?;
+                    store::write_vault(
+                        &self.file_path,
+                        &new_salt,
+                        &new_key,
+                        &data,
+                    )
+                    .await?;
+                    tracing::info!(
+                        target: "vault",
+                        "migrated legacy vault to current Argon2 params"
+                    );
+                    // Update in-memory salt to match what we just wrote.
+                    let mut inner = self.inner.write().await;
+                    inner.key = Some(new_key.clone());
+                    inner.salt = Some(new_salt);
+                    inner.data = Some(data);
+                    return Ok(());
+                }
+            };
+
         let data: VaultData = serde_json::from_slice(&plaintext)?;
 
         let mut inner = self.inner.write().await;
-        inner.key = Some(key);
+        inner.key = Some(final_key);
         inner.salt = Some(salt);
         inner.data = Some(data);
         Ok(())

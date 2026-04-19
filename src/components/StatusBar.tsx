@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   Plug,
-  PlugZap,
   Server as ServerIcon,
   ShieldCheck,
   ShieldOff,
@@ -12,8 +11,10 @@ import {
   ArrowDown,
   Fingerprint,
   FolderTree,
+  GitBranch,
 } from "lucide-react";
 
+import * as api from "@/lib/api";
 import { useSessions } from "@/stores/sessions";
 import { useServers } from "@/stores/servers";
 import { useProjects } from "@/stores/projects";
@@ -52,6 +53,39 @@ export function StatusBar() {
   const [bytesUp, setBytesUp] = useState(0);
   const [bytesDown, setBytesDown] = useState(0);
 
+  // Git branch of the active project's local repo. Polled every 30 s so
+  // branch switches made from a terminal are reflected without the user
+  // having to reopen the tab.
+  const [gitBranch, setGitBranch] = useState<string | null>(null);
+  const [gitHead, setGitHead] = useState<string | null>(null);
+  useEffect(() => {
+    setGitBranch(null);
+    setGitHead(null);
+    if (!project) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const info = await api.gitInfo(project.id);
+        if (cancelled) return;
+        if (info.is_repo) {
+          setGitBranch(info.branch ?? null);
+          setGitHead(info.head_short ?? null);
+        } else {
+          setGitBranch(null);
+          setGitHead(null);
+        }
+      } catch {
+        /* repo unreadable — silent */
+      }
+    };
+    void load();
+    const t = setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [project?.id]);
+
   useEffect(() => {
     setBytesUp(0);
     setBytesDown(0);
@@ -88,10 +122,29 @@ export function StatusBar() {
     <footer className="flex h-6 shrink-0 items-center gap-3 border-t bg-card px-3 text-[11px] text-muted-foreground">
       {active && server ? (
         <>
-          {/* Connection — user@host:port */}
+          {/* Connection — user@host:port with a colored dot that mirrors
+              the lifecycle state: green = live, amber = reconnecting,
+              red = disconnected. */}
           <Item
-            icon={<PlugZap className="h-3 w-3 text-green-500" />}
-            tooltip={`Connected via SSH (${server.auth_kind} auth)`}
+            icon={
+              <span
+                className={cn(
+                  "inline-block h-2 w-2 rounded-full",
+                  active.status === "connected"
+                    ? "bg-green-500"
+                    : active.status === "reconnecting"
+                      ? "animate-pulse bg-yellow-500"
+                      : "bg-red-500",
+                )}
+              />
+            }
+            tooltip={
+              active.status === "connected"
+                ? `Connected via ${active.session.protocol.toUpperCase()} (${server.auth_kind} auth)`
+                : active.status === "reconnecting"
+                  ? "Reconnecting…"
+                  : (active.disconnectReason ?? "Disconnected")
+            }
           >
             <span className="font-mono">
               {server.user}@{server.host}:{server.port}
@@ -107,6 +160,20 @@ export function StatusBar() {
               <span className="font-mono max-w-[32ch] truncate">
                 {project.name}
               </span>
+            </Item>
+          )}
+
+          {/* Current git branch of the project's local repo */}
+          {gitBranch && (
+            <Item
+              icon={<GitBranch className="h-3 w-3 text-primary" />}
+              tooltip={
+                gitHead
+                  ? `Local branch · HEAD ${gitHead}`
+                  : "Local branch"
+              }
+            >
+              <span className="font-mono">{gitBranch}</span>
             </Item>
           )}
 

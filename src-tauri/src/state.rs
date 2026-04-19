@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tokio::sync::oneshot;
 
 use crate::ftp::FtpSession;
@@ -43,13 +43,11 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(app: AppHandle) -> Self {
-        // Vault file lives at `%APPDATA%\com.deploytools.app\vault.enc`
-        // on Windows (resolved via the Tauri path resolver).
-        let data_dir = app
-            .path()
-            .app_data_dir()
-            .expect("resolve app_data_dir");
-        let vault_path = data_dir.join("vault.enc");
+        // Vault location resolved by `settings::resolve_vault_path` —
+        // defaults to `<exe-dir>/vault.enc`, user-configurable via the
+        // Settings dialog, with a legacy `%APPDATA%` fallback.
+        let vault_path = crate::settings::resolve_vault_path(&app);
+        tracing::info!(target: "vault", "using vault at {}", vault_path.display());
 
         Self {
             app,

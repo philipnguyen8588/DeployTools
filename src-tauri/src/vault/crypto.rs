@@ -1,8 +1,14 @@
 //! Argon2id key derivation + AES-256-GCM authenticated encryption.
 //!
-//! Parameters (hardcoded — treat as versioned):
-//!   Argon2id: m=64 MiB, t=3 iterations, p=4 lanes, 32-byte output
-//!   AES-256-GCM: 96-bit random nonce, 128-bit tag
+//! Parameters:
+//!   Argon2id current: m=19 MiB, t=2 iterations, p=1 lane, 32-byte output
+//!     (OWASP 2024 recommended minimum — fast enough that unlock feels
+//!      instant on modern hardware, strong enough to resist brute force.)
+//!   Argon2id legacy:  m=64 MiB, t=3 iterations, p=4 lanes — used by
+//!     vaults created before 1.1.x. `Vault::unlock` tries the current
+//!     params first and transparently migrates legacy vaults on
+//!     successful unlock.
+//!   AES-256-GCM: 96-bit random nonce, 128-bit tag.
 //!
 //! All key material is wrapped in [`Zeroizing`] to guarantee erasure on drop.
 
@@ -19,9 +25,18 @@ pub const SALT_LEN: usize = 16;
 pub const NONCE_LEN: usize = 12;
 pub const KEY_LEN: usize = 32;
 
-/// Argon2id: 64 MiB memory, 3 iterations, 4 lanes.
-/// Deliberately high cost — each unlock takes ~500 ms on a modern laptop.
+/// Current Argon2id params — OWASP 2024 recommended minimum. Tuned so
+/// unlock finishes within a few hundred milliseconds on modest hardware
+/// while still costing serious GPU effort to brute force (~19 MiB RAM
+/// per guess, 2 iterations).
 fn argon2_params() -> Params {
+    Params::new(19 * 1024, 2, 1, Some(KEY_LEN)).expect("valid argon2 params")
+}
+
+/// Legacy params used before the 1.1.x rebalance. Kept purely so we can
+/// unlock older vaults and re-encrypt them with the current params on
+/// the fly. Do NOT use for new vaults.
+fn argon2_params_legacy() -> Params {
     Params::new(64 * 1024, 3, 4, Some(KEY_LEN)).expect("valid argon2 params")
 }
 
@@ -37,9 +52,29 @@ pub fn random_nonce() -> [u8; NONCE_LEN] {
     out
 }
 
-/// Derive a 32-byte key from password + salt using Argon2id.
+/// Derive a 32-byte key from password + salt using Argon2id. Uses the
+/// current OWASP params — fast path for all vaults written by this
+/// version.
 pub fn derive_key(password: &str, salt: &[u8; SALT_LEN]) -> AppResult<Zeroizing<[u8; KEY_LEN]>> {
-    let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon2_params());
+    derive_key_with(password, salt, argon2_params())
+}
+
+/// Legacy derivation for vaults written before the 1.1.x params change.
+/// `Vault::unlock` falls back to this when the new params fail and
+/// then re-encrypts the file with the fresh key.
+pub fn derive_key_legacy(
+    password: &str,
+    salt: &[u8; SALT_LEN],
+) -> AppResult<Zeroizing<[u8; KEY_LEN]>> {
+    derive_key_with(password, salt, argon2_params_legacy())
+}
+
+fn derive_key_with(
+    password: &str,
+    salt: &[u8; SALT_LEN],
+    params: Params,
+) -> AppResult<Zeroizing<[u8; KEY_LEN]>> {
+    let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut key = Zeroizing::new([0u8; KEY_LEN]);
     argon
         .hash_password_into(password.as_bytes(), salt, key.as_mut_slice())

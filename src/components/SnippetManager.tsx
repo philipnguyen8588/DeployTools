@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Braces,
   Plus,
-  Play,
   Edit3,
   Trash2,
   Search,
@@ -23,26 +22,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "./ui/dialog";
-import { cn } from "@/lib/utils";
 import { useConfirm } from "./ConfirmDialog";
-import { useSessions } from "@/stores/sessions";
 
 /**
- * Full-screen snippet library — the place to create, edit, and run
- * reusable shell commands. Rendered when `useView().view === "snippets"`.
- *
- * Running a snippet requires an active SSH session (picked via the
- * top-right dropdown). Output streams into the Activity console of
- * that session.
+ * Full-screen snippet library — CRUD only. The place to run a snippet
+ * is now each session's Terminal tab: its "Snippets" button opens a
+ * picker, fills template variables, and pastes the resolved command
+ * into the interactive PTY (you review + hit Enter to run).
  */
 export function SnippetManager() {
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [filter, setFilter] = useState("");
   const [editing, setEditing] = useState<Snippet | "new" | null>(null);
-  const [running, setRunning] = useState<Snippet | null>(null);
-  const tabs = useSessions((s) => s.tabs);
-  const activeId = useSessions((s) => s.activeId);
-  const setActive = useSessions((s) => s.setActive);
   const confirm = useConfirm();
 
   const refresh = useCallback(async () => {
@@ -68,8 +59,6 @@ export function SnippetManager() {
     );
   }, [snippets, filter]);
 
-  const activeTab = tabs.find((t) => t.session.id === activeId);
-
   return (
     <div className="flex h-full flex-col bg-background">
       <div className="flex items-center gap-2 border-b p-3">
@@ -79,26 +68,9 @@ export function SnippetManager() {
           {snippets.length} snippets
         </span>
         <div className="flex-1" />
-        {tabs.length > 0 ? (
-          <label className="flex items-center gap-1 text-xs text-muted-foreground">
-            Run on:
-            <select
-              value={activeId ?? ""}
-              onChange={(e) => setActive(e.target.value)}
-              className="h-7 rounded-md border border-input bg-background px-2 text-xs"
-            >
-              {tabs.map((t) => (
-                <option key={t.session.id} value={t.session.id}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : (
-          <span className="text-xs text-muted-foreground">
-            Open a session to run snippets
-          </span>
-        )}
+        <span className="text-xs text-muted-foreground">
+          Run from a server's Terminal tab → <strong>Snippets</strong> button.
+        </span>
         <div className="relative">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -144,19 +116,6 @@ export function SnippetManager() {
                   <span className="flex-1 truncate text-sm font-semibold">
                     {s.name}
                   </span>
-                  <button
-                    title="Run"
-                    className="rounded p-1 text-primary opacity-70 hover:bg-accent hover:opacity-100"
-                    onClick={() => {
-                      if (!activeTab) {
-                        toast.error("Open a session first");
-                        return;
-                      }
-                      setRunning(s);
-                    }}
-                  >
-                    <Play className="h-3.5 w-3.5" />
-                  </button>
                   <button
                     title="Edit"
                     className="rounded p-1 opacity-0 hover:bg-accent group-hover:opacity-100"
@@ -216,14 +175,6 @@ export function SnippetManager() {
           snippet={editing === "new" ? null : editing}
           onClose={() => setEditing(null)}
           onSaved={() => refresh()}
-        />
-      )}
-
-      {running && activeTab && (
-        <SnippetRunDialog
-          snippet={running}
-          sessionId={activeTab.session.id}
-          onClose={() => setRunning(null)}
         />
       )}
     </div>
@@ -433,112 +384,3 @@ function SnippetEditDialog({
   );
 }
 
-// ----------- Run dialog ------------
-
-function SnippetRunDialog({
-  snippet,
-  sessionId,
-  onClose,
-}: {
-  snippet: Snippet;
-  sessionId: string;
-  onClose: () => void;
-}) {
-  const [values, setValues] = useState<Record<string, string>>(() => {
-    const m: Record<string, string> = {};
-    for (const v of snippet.variables) {
-      m[v.key] = v.default ?? "";
-    }
-    return m;
-  });
-  const [busy, setBusy] = useState(false);
-
-  async function run(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    try {
-      const code = await api.snippetRun(sessionId, snippet.id, values);
-      toast.success(`Snippet exited ${code}`);
-      onClose();
-    } catch (err) {
-      toast.error(`${err}`);
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Run: {snippet.name}</DialogTitle>
-          {snippet.description && (
-            <DialogDescription>{snippet.description}</DialogDescription>
-          )}
-        </DialogHeader>
-
-        <form onSubmit={run} className="space-y-3">
-          {snippet.variables.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No variables — click Run to execute.
-            </p>
-          ) : (
-            snippet.variables.map((v) => (
-              <div key={v.key} className="space-y-1.5">
-                <Label>
-                  {v.label || v.key}{" "}
-                  <span className="font-mono text-[10px] text-muted-foreground">
-                    {`{{${v.key}}}`}
-                  </span>
-                </Label>
-                {v.kind === "choice" ? (
-                  <select
-                    required
-                    value={values[v.key] ?? ""}
-                    onChange={(e) =>
-                      setValues({ ...values, [v.key]: e.target.value })
-                    }
-                    className="flex h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-                  >
-                    <option value="">Select…</option>
-                    {v.choices.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <Input
-                    type={v.kind === "secret" ? "password" : "text"}
-                    required
-                    value={values[v.key] ?? ""}
-                    onChange={(e) =>
-                      setValues({ ...values, [v.key]: e.target.value })
-                    }
-                  />
-                )}
-              </div>
-            ))
-          )}
-
-          <div
-            className={cn(
-              "max-h-32 overflow-y-auto rounded bg-muted/30 p-2 font-mono text-[11px]",
-            )}
-          >
-            {snippet.command}
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy}>
-              <Play className="mr-1 h-3.5 w-3.5" />
-              {busy ? "Running…" : "Run"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}

@@ -171,6 +171,28 @@ export const snippetRun = (
   snippetId: UUID,
   vars: Record<string, string>,
 ) => invoke<number>("snippet_run", { sessionId, snippetId, vars });
+/** Return the resolved command string (built-ins + user vars substituted).
+ *  Intended for pasting into the active interactive terminal. */
+export const snippetResolve = (
+  sessionId: string,
+  snippetId: UUID,
+  vars: Record<string, string>,
+) =>
+  invoke<string>("snippet_resolve", { sessionId, snippetId, vars });
+
+// --- Terminal command history (per-server) ---
+export interface TerminalHistoryEntry {
+  id: UUID;
+  server_id: UUID;
+  command: string;
+  time_ms: number;
+}
+export const historyList = (serverId: UUID, limit?: number) =>
+  invoke<TerminalHistoryEntry[]>("history_list", { serverId, limit });
+export const historyAdd = (serverId: UUID, command: string) =>
+  invoke<void>("history_add", { serverId, command });
+export const historyClear = (serverId: UUID) =>
+  invoke<void>("history_clear", { serverId });
 
 // --- Metrics ---
 export const fetchMetrics = (sessionId: string) =>
@@ -257,3 +279,29 @@ export const gitLog = (projectId: UUID, limit?: number) =>
   invoke<GitCommit[]>("git_log", { projectId, limit: limit ?? 100 });
 export const gitFilesInCommit = (projectId: UUID, hash: string) =>
   invoke<GitFile[]>("git_files_in_commit", { projectId, hash });
+
+// --- System terminal (native OS shell / SSH window) ---
+export const openLocalTerminal = (cwd?: string) =>
+  invoke<void>("open_local_terminal", { cwd });
+export const openSshTerminal = (serverId: UUID, remotePath?: string) =>
+  invoke<void>("open_ssh_terminal", { serverId, remotePath });
+
+// --- Settings ---
+export interface AppSettings {
+  vault_path: string;
+  vault_dir: string;
+  is_default: boolean;
+  default_dir: string;
+  exe_dir: string;
+  legacy_appdata_exists: boolean;
+  legacy_appdata_path: string | null;
+  idle_timeout_minutes: number;
+  idle_timeout_default_minutes: number;
+}
+export const getSettings = () => invoke<AppSettings>("get_settings");
+export const setVaultDir = (dir: string) =>
+  invoke<void>("set_vault_dir", { dir });
+export const resetVaultDir = () => invoke<void>("reset_vault_dir");
+export const setIdleTimeoutMinutes = (minutes: number) =>
+  invoke<void>("set_idle_timeout_minutes", { minutes });
+export const restartApp = () => invoke<void>("restart_app");

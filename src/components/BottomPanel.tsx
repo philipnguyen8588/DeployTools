@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import {
   Plus,
   X,
@@ -9,13 +9,34 @@ import {
   Cog,
   Activity as ActivityIcon,
   Loader2,
+  Braces,
+  RefreshCcw,
+  Search,
+  History as HistoryIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
+import * as api from "@/lib/api";
+import { useSessions } from "@/stores/sessions";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 // Terminal + ActivityConsole are eagerly imported — Terminal is the
 // default landing tab and Activity is the only tab on FTP sessions.
 import { Terminal } from "./Terminal";
 import { ActivityConsole } from "./ActivityConsole";
+
+// Snippets picker — lazy, only loads when the user clicks the button.
+const SnippetInsertDialog = lazy(() =>
+  import("./SnippetInsertDialog").then((m) => ({
+    default: m.SnippetInsertDialog,
+  })),
+);
+const HistoryInsertDialog = lazy(() =>
+  import("./HistoryInsertDialog").then((m) => ({
+    default: m.HistoryInsertDialog,
+  })),
+);
 
 // The rest are lazy — they only load when the user activates the tab,
 // trimming the initial JS heap considerably on app start.
@@ -34,6 +55,8 @@ const MetricsPanel = lazy(() =>
 
 interface Props {
   sessionId: string;
+  /** Used to key the terminal command history per-server. */
+  serverId: string;
   projectId: string | null;
   projectRemoteBase?: string | null;
   /** Wire protocol — gates SSH-only tabs (Terminal, Git, Docker, …). */
@@ -66,6 +89,7 @@ interface BottomTab {
  */
 export function BottomPanel({
   sessionId,
+  serverId,
   projectId,
   projectRemoteBase,
   protocol = "ssh",
@@ -87,9 +111,126 @@ export function BottomPanel({
   );
   const counterRef = useCounter(terminalTabs.length);
 
+  // Per-tab PTY ids, populated by each Terminal when its shell is ready.
+  // We need these to paste snippets into the currently visible terminal.
+  const [terminalIds, setTerminalIds] = useState<Record<string, string>>({});
+  const [snippetOpen, setSnippetOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  /** Counter bumped whenever we want the active terminal to re-grab
+   *  keyboard focus — e.g. after a Snippets/History modal closes. */
+  const [focusBump, setFocusBump] = useState(0);
+  const refocusTerminal = () => setFocusBump((n) => n + 1);
+
+  // Per-terminal-tab "last time the user looked at it". A tab's dot
+  // lights up only when the session's `lastActivityAt` is strictly
+  // newer than `lastSeen[tabId]`. The field is refreshed on activate
+  // (both arriving AND leaving tabs) so the moment the user turns
+  // away we snapshot "everything up to NOW has been seen"; only
+  // activity strictly after this point counts as unread.
+  const [lastSeen, setLastSeen] = useState<Record<string, number>>({});
+
+  const sessionActivity = useSessions(
+    (s) => s.tabs.find((t) => t.session.id === sessionId)?.lastActivityAt ?? 0,
+  );
+
+  // Initialise lastSeen for whichever tab the user is on right now.
+  // Without this, a brand-new tab's lastSeen starts at 0 and any
+  // initial MOTD output trips the "unread" check.
+  useEffect(() => {
+    if (!terminalTabs.some((t) => t.id === active)) return;
+    setLastSeen((prev) =>
+      prev[active] ? prev : { ...prev, [active]: Date.now() },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Any time the active terminal has new output, bump its `lastSeen`
+  // in real time so the dot never starts appearing WHILE the user is
+  // reading. This runs on every render that changes `sessionActivity`,
+  // which is driven by the sessions store (debounced by 200 ms, so it
+  // won't spam).
+  useEffect(() => {
+    if (!terminalTabs.some((t) => t.id === active)) return;
+    setLastSeen((prev) => {
+      if ((prev[active] ?? 0) >= sessionActivity) return prev;
+      return { ...prev, [active]: sessionActivity };
+    });
+  }, [sessionActivity, active, terminalTabs]);
+
+  // Lifted filter + refresh state for the Docker / Services panels.
+  // Each panel reads `filter` as a prop and watches `refreshNonce` for
+  // the shared toolbar's Refresh click.
+  const [dockerFilter, setDockerFilter] = useState("");
+  const [servicesFilter, setServicesFilter] = useState("");
+  const [dockerNonce, setDockerNonce] = useState(0);
+  const [servicesNonce, setServicesNonce] = useState(0);
+  const [dockerBusy, setDockerBusy] = useState(false);
+  const [servicesBusy, setServicesBusy] = useState(false);
+
+  // Refs to the two filter inputs — we auto-focus them whenever their
+  // tab becomes active so the user can start typing straight away.
+  const dockerFilterRef = useRef<HTMLInputElement>(null);
+  const servicesFilterRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (active === "docker") {
+      window.setTimeout(() => dockerFilterRef.current?.focus(), 0);
+    } else if (active === "services") {
+      window.setTimeout(() => servicesFilterRef.current?.focus(), 0);
+    }
+  }, [active]);
+
+  const activeIsTerminal = terminalTabs.some((t) => t.id === active);
+  const activeTerminalId = activeIsTerminal ? terminalIds[active] ?? null : null;
+
+  // Global keyboard shortcuts while a terminal tab is active.
+  //   Ctrl+Shift+S  → open Snippets picker
+  //   Ctrl+Shift+H  → open History picker
+  // We run in the capture phase + stop propagation so xterm doesn't
+  // see the keys as typed input.
+  useEffect(() => {
+    if (!activeIsTerminal) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey && e.shiftKey)) return;
+      const key = e.key.toLowerCase();
+      if (key === "s") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (activeTerminalId) setSnippetOpen(true);
+      } else if (key === "h") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (activeTerminalId) setHistoryOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", onKey, { capture: true });
+  }, [activeIsTerminal, activeTerminalId]);
+
+  async function insertSnippetIntoActiveTerminal(cmd: string) {
+    if (!activeTerminalId) return;
+    try {
+      await api.termWrite(sessionId, activeTerminalId, cmd);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("insert snippet:", e);
+    }
+  }
+
   function activate(id: string) {
+    const prevActive = active;
     setActive(id);
     setVisited((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+    // Mark BOTH the leaving tab and the arriving tab as "seen now":
+    // the leaving one because any activity from this instant on is what
+    // the user actually misses, the arriving one so its dot clears
+    // immediately instead of flickering on next render.
+    const stamp = Date.now();
+    setLastSeen((prev) => ({
+      ...prev,
+      [id]: stamp,
+      [prevActive]: stamp,
+    }));
   }
 
   function newTerminal(opts?: { label?: string; seed?: string }) {
@@ -130,6 +271,12 @@ export function BottomPanel({
       }
       return remaining;
     });
+    setTerminalIds((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   }
 
   // SSH sessions get the full tab suite; FTP/FTPS only get Activity
@@ -155,8 +302,24 @@ export function BottomPanel({
 
   return (
     <div className="flex h-full flex-col">
-      {/* Tab strip */}
-      <div className="flex items-center gap-0.5 overflow-x-auto border-b bg-card px-1 py-1">
+      {/* Tab strip — tabs scroll horizontally; the right-side toolbar
+          (Snippets button) stays pinned. */}
+      <div className="flex items-center border-b bg-card">
+        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1 py-1">
+        {/* Standalone "+" when there are zero terminal tabs — otherwise
+            the inline + (rendered as `after` of the last terminal chip)
+            covers this, but that disappears once the last terminal is
+            closed and the user would be stuck. */}
+        {isSsh && terminalTabs.length === 0 && (
+          <button
+            onClick={() => newTerminal()}
+            aria-label="New terminal"
+            title="New terminal"
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        )}
         {ordered.map((t, idx) => {
           // Insert "+" button immediately after the last terminal tab.
           const isLastTerminal =
@@ -176,6 +339,11 @@ export function BottomPanel({
               }
               Icon={Icon}
               label={t.label}
+              unread={
+                t.kind === "terminal" &&
+                !isActive &&
+                sessionActivity > (lastSeen[t.id] ?? 0)
+              }
               after={
                 isLastTerminal && (
                   <button
@@ -191,6 +359,95 @@ export function BottomPanel({
             />
           );
         })}
+        </div>
+
+        {/* Pinned right-side toolbar — content depends on the active
+            tab. Terminal → Snippets button. Docker / Services → search
+            input + refresh. Other tabs → nothing. */}
+        {activeIsTerminal && (
+          <div className="flex shrink-0 items-center gap-1 border-l px-1 py-1">
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => {
+                if (!activeTerminalId) {
+                  toast.info("Terminal is still starting — try again in a second.");
+                  return;
+                }
+                setHistoryOpen(true);
+              }}
+              title="Reuse a command from this server's terminal history (Ctrl+Shift+H)"
+            >
+              <HistoryIcon className="mr-1 h-3 w-3" />
+              History
+            </Button>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => {
+                if (!activeTerminalId) {
+                  toast.info("Terminal is still starting — try again in a second.");
+                  return;
+                }
+                setSnippetOpen(true);
+              }}
+              title="Paste a saved snippet into this terminal (Ctrl+Shift+S)"
+            >
+              <Braces className="mr-1 h-3 w-3" />
+              Snippets
+            </Button>
+          </div>
+        )}
+        {active === "docker" && (
+          <div className="flex shrink-0 items-center gap-1 border-l px-1 py-1">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                ref={dockerFilterRef}
+                placeholder="Filter services…"
+                value={dockerFilter}
+                onChange={(e) => setDockerFilter(e.target.value)}
+                className="h-6 w-40 pl-6 text-xs"
+              />
+            </div>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              onClick={() => setDockerNonce((n) => n + 1)}
+              disabled={dockerBusy}
+              title="Refresh Docker Compose state"
+            >
+              <RefreshCcw
+                className={cn("h-3.5 w-3.5", dockerBusy && "animate-spin")}
+              />
+            </Button>
+          </div>
+        )}
+        {active === "services" && (
+          <div className="flex shrink-0 items-center gap-1 border-l px-1 py-1">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                ref={servicesFilterRef}
+                placeholder="Filter units…"
+                value={servicesFilter}
+                onChange={(e) => setServicesFilter(e.target.value)}
+                className="h-6 w-40 pl-6 text-xs"
+              />
+            </div>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              onClick={() => setServicesNonce((n) => n + 1)}
+              disabled={servicesBusy}
+              title="Refresh systemd unit list"
+            >
+              <RefreshCcw
+                className={cn("h-3.5 w-3.5", servicesBusy && "animate-spin")}
+              />
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Content — mount-on-first-activate.
@@ -206,7 +463,28 @@ export function BottomPanel({
               active === t.id ? "block" : "hidden",
             )}
           >
-            <Terminal sessionId={sessionId} seed={t.seed} />
+            <Terminal
+              sessionId={sessionId}
+              serverId={serverId}
+              isActive={active === t.id}
+              focusTrigger={focusBump}
+              seed={t.seed}
+              onTerminalReady={(tid) =>
+                setTerminalIds((prev) => {
+                  if (tid === null) {
+                    if (!(t.id in prev)) return prev;
+                    const next = { ...prev };
+                    delete next[t.id];
+                    return next;
+                  }
+                  if (prev[t.id] === tid) return prev;
+                  return { ...prev, [t.id]: tid };
+                })
+              }
+              // onServerOutput removed: the "unread" dot is now driven
+              // by `sessionActivity > lastSeen[tabId]` instead of a
+              // per-Terminal callback, so no extra prop is needed.
+            />
           </div>
         ))}
 
@@ -221,12 +499,23 @@ export function BottomPanel({
         )}
         {projectId && visited.has("docker") && (
           <LazyPane visible={active === "docker"}>
-            <DockerPanel sessionId={sessionId} projectId={projectId} />
+            <DockerPanel
+              sessionId={sessionId}
+              projectId={projectId}
+              filter={dockerFilter}
+              refreshNonce={dockerNonce}
+              onBusyChange={setDockerBusy}
+            />
           </LazyPane>
         )}
         {visited.has("services") && (
           <LazyPane visible={active === "services"}>
-            <ServicePanel sessionId={sessionId} />
+            <ServicePanel
+              sessionId={sessionId}
+              filter={servicesFilter}
+              refreshNonce={servicesNonce}
+              onBusyChange={setServicesBusy}
+            />
           </LazyPane>
         )}
         {visited.has("resources") && (
@@ -242,6 +531,31 @@ export function BottomPanel({
           <ActivityConsole sessionId={sessionId} projectId={projectId} />
         </Pane>
       </div>
+
+      {snippetOpen && (
+        <Suspense fallback={null}>
+          <SnippetInsertDialog
+            sessionId={sessionId}
+            onInsert={(cmd) => void insertSnippetIntoActiveTerminal(cmd)}
+            onClose={() => {
+              setSnippetOpen(false);
+              refocusTerminal();
+            }}
+          />
+        </Suspense>
+      )}
+      {historyOpen && (
+        <Suspense fallback={null}>
+          <HistoryInsertDialog
+            serverId={serverId}
+            onInsert={(cmd) => void insertSnippetIntoActiveTerminal(cmd)}
+            onClose={() => {
+              setHistoryOpen(false);
+              refocusTerminal();
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -292,6 +606,7 @@ function TabChip({
   Icon,
   label,
   after,
+  unread,
 }: {
   active: boolean;
   onActivate: () => void;
@@ -299,6 +614,7 @@ function TabChip({
   Icon: React.ComponentType<{ className?: string }>;
   label: string;
   after?: React.ReactNode;
+  unread?: boolean;
 }) {
   return (
     <div className="flex items-center">
@@ -315,6 +631,12 @@ function TabChip({
       >
         <Icon className="h-3 w-3 shrink-0" />
         <span className="truncate">{label}</span>
+        {unread && (
+          <span
+            className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+            title="New output"
+          />
+        )}
         {onClose && (
           <button
             aria-label="Close"

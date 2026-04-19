@@ -1,5 +1,43 @@
 import { Suspense, lazy, useEffect, useState } from "react";
-import { Lock, Rocket, KeyRound, Loader2 } from "lucide-react";
+import {
+  Lock,
+  Rocket,
+  KeyRound,
+  Loader2,
+  Settings,
+  HelpCircle,
+} from "lucide-react";
+
+/**
+ * Swallow every keyboard combo that could trigger DevTools when running
+ * a production build. Tauri 2 already ships Release with the `devtools`
+ * feature disabled, but the WebView2 host can still honour F12 / the
+ * right-click "Inspect" menu if the OS Edge version is set up for it —
+ * this is a belt-and-suspenders net at the frontend.
+ *
+ * Only active when Vite built in production mode, so dev mode (`npm run
+ * tauri:dev`) keeps F12 working for debugging.
+ */
+function installDevToolsGuard() {
+  if (!import.meta.env.PROD) return;
+  const block = (e: KeyboardEvent) => {
+    const k = e.key;
+    // F12 and Fn combinations vary between keyboards; check by key + code.
+    const isF12 = k === "F12" || e.code === "F12";
+    const isInspect =
+      (e.ctrlKey || e.metaKey) &&
+      e.shiftKey &&
+      ["i", "I", "j", "J", "c", "C"].includes(k);
+    const isViewSource =
+      (e.ctrlKey || e.metaKey) && !e.shiftKey && (k === "u" || k === "U");
+    if (isF12 || isInspect || isViewSource) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+  window.addEventListener("keydown", block, { capture: true });
+}
+installDevToolsGuard();
 
 import { UnlockDialog } from "./components/UnlockDialog";
 import { Sidebar } from "./components/Sidebar";
@@ -27,9 +65,21 @@ const ChangePasswordDialog = lazy(() =>
     default: m.ChangePasswordDialog,
   })),
 );
+const SettingsDialog = lazy(() =>
+  import("./components/SettingsDialog").then((m) => ({
+    default: m.SettingsDialog,
+  })),
+);
+const HelpDialog = lazy(() =>
+  import("./components/HelpDialog").then((m) => ({
+    default: m.HelpDialog,
+  })),
+);
 
 import { useVault } from "./stores/vault";
 import { useSessions } from "./stores/sessions";
+import { cn } from "./lib/utils";
+import * as api from "./lib/api";
 import { useServers } from "./stores/servers";
 import { useProjects } from "./stores/projects";
 import { useView } from "./stores/view";
@@ -41,6 +91,47 @@ export default function App() {
   const { refresh: refreshProjects } = useProjects();
   const view = useView((s) => s.view);
   const [changingPassword, setChangingPassword] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  const helpButton = (
+    <Button
+      size="icon"
+      variant="ghost"
+      aria-label="Help"
+      title="Help · shortcuts · about"
+      onClick={() => setHelpOpen(true)}
+    >
+      <HelpCircle className="h-4 w-4" />
+    </Button>
+  );
+
+  const gearButton = (
+    <Button
+      size="icon"
+      variant="ghost"
+      aria-label="Settings"
+      title="Settings"
+      onClick={() => setSettingsOpen(true)}
+    >
+      <Settings className="h-4 w-4" />
+    </Button>
+  );
+
+  const floatingDialogs = (
+    <>
+      {settingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsDialog onClose={() => setSettingsOpen(false)} />
+        </Suspense>
+      )}
+      {helpOpen && (
+        <Suspense fallback={null}>
+          <HelpDialog onClose={() => setHelpOpen(false)} />
+        </Suspense>
+      )}
+    </>
+  );
 
   useEffect(() => {
     if (unlocked) {
@@ -49,24 +140,69 @@ export default function App() {
     }
   }, [unlocked, refreshServers, refreshProjects]);
 
+  // Idle-timeout watcher. Every 60 s, scan open tabs and close any that
+  // haven't had terminal I/O in `idleTimeoutMin` minutes (read fresh on
+  // each tick — so changes made in the Settings dialog apply within a
+  // minute, no restart needed). `0` disables the watcher.
+  useEffect(() => {
+    if (!unlocked) return;
+    let idleTimeoutMin = 30;
+    const reloadCfg = async () => {
+      try {
+        idleTimeoutMin = (await api.getSettings()).idle_timeout_minutes;
+      } catch {
+        /* fallback to 30 */
+      }
+    };
+    void reloadCfg();
+    const tick = async () => {
+      await reloadCfg();
+      if (idleTimeoutMin <= 0) return; // disabled
+      const ms = idleTimeoutMin * 60_000;
+      const now = Date.now();
+      const tabs = useSessions.getState().tabs;
+      for (const t of tabs) {
+        if (t.status !== "connected") continue;
+        if (now - t.lastActivityAt > ms) {
+          void useSessions
+            .getState()
+            .markDisconnected(
+              t.session.id,
+              `Auto-disconnected after ${idleTimeoutMin} min idle.`,
+            );
+        }
+      }
+    };
+    const h = setInterval(() => void tick(), 60_000);
+    return () => clearInterval(h);
+  }, [unlocked]);
+
   if (!unlocked) {
     return (
       <div className="flex h-screen flex-col">
-        <TitleBar />
+        <TitleBar
+          rightSlot={
+            <>
+              {helpButton}
+              {gearButton}
+            </>
+          }
+        />
         <div className="min-h-0 flex-1">
           <UnlockDialog />
         </div>
+        {floatingDialogs}
       </div>
     );
   }
-
-  const active = tabs.find((t) => t.session.id === activeId);
 
   return (
     <div className="flex h-screen flex-col">
       <TitleBar
         rightSlot={
           <>
+            {helpButton}
+            {gearButton}
             <Button
               size="icon"
               variant="ghost"
@@ -94,6 +230,7 @@ export default function App() {
           <ChangePasswordDialog onClose={() => setChangingPassword(false)} />
         </Suspense>
       )}
+      {floatingDialogs}
 
       <div className="flex min-h-0 flex-1">
         <Sidebar />
@@ -110,11 +247,26 @@ export default function App() {
           ) : (
             <>
               <TabBar />
-              <div className="min-h-0 flex-1">
-                {active ? (
-                  <ServerTab key={active.session.id} tab={active} />
-                ) : (
+              {/* Keep every session tab mounted once opened. We toggle
+                  visibility with CSS instead of conditional rendering
+                  so switching between servers doesn't unmount the
+                  terminals / file browsers — they'd otherwise lose
+                  scrollback + any in-flight work. */}
+              <div className="relative min-h-0 flex-1">
+                {tabs.length === 0 ? (
                   <EmptyState />
+                ) : (
+                  tabs.map((t) => (
+                    <div
+                      key={t.session.id}
+                      className={cn(
+                        "absolute inset-0",
+                        t.session.id === activeId ? "block" : "hidden",
+                      )}
+                    >
+                      <ServerTab tab={t} />
+                    </div>
+                  ))
                 )}
               </div>
             </>

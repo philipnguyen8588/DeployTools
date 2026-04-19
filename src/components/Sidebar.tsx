@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Server as ServerIcon,
+  Network,
   Folder,
   Plus,
   Play,
@@ -11,6 +12,8 @@ import {
   ChevronDown,
   Cloud,
   Braces,
+  Copy as CopyIcon,
+  MoreVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -21,8 +24,19 @@ import { useView } from "@/stores/view";
 import * as api from "@/lib/api";
 import { ServerDialog } from "./ServerDialog";
 import { ProjectDialog } from "./ProjectDialog";
+import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
+import { ContextMenu, type ContextMenuItem } from "./ui/context-menu";
 import { cn } from "@/lib/utils";
-import type { Project, ServerSummary } from "@/lib/types";
+import type { Project, Server, ServerSummary } from "@/lib/types";
+
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+
+/** Shape of the open dropdown menu state (unified for server + project). */
+interface MenuState {
+  x: number;
+  y: number;
+  items: ContextMenuItem[];
+}
 
 export function Sidebar() {
   const { servers, refresh: refreshServers, remove: removeServer } = useServers();
@@ -34,9 +48,18 @@ export function Sidebar() {
   const [editingServer, setEditingServer] = useState<ServerSummary | "new" | null>(
     null,
   );
+  /** Prefilled Server used by the Copy action — id is nil so Save
+   *  creates a new record (keeping the original untouched). */
+  const [copyingServer, setCopyingServer] = useState<Server | null>(null);
   const [editingProject, setEditingProject] = useState<
     Project | { forServer: string } | null
   >(null);
+  /** Prefilled Project for the Copy action (id nil). */
+  const [copyingProject, setCopyingProject] = useState<Project | null>(null);
+  /** Pending deletes (resolved via DeleteConfirmDialog). */
+  const [deletingServer, setDeletingServer] = useState<ServerSummary | null>(null);
+  const [deletingProject, setDeletingProject] = useState<Project | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
 
   useEffect(() => {
     void refreshServers();
@@ -79,6 +102,82 @@ export function Sidebar() {
     } catch (e) {
       toast.error(`${e}`, { id: p });
     }
+  }
+
+  /** Clone a server — opens the editor pre-filled with the existing
+   *  credentials but with a nil id. The user reviews / renames and
+   *  hits Save to create a new record. The original is untouched. */
+  async function handleDuplicateServer(s: ServerSummary) {
+    try {
+      const full = await api.getServer(s.id);
+      setCopyingServer({ ...full, id: NIL_UUID, name: `${full.name} (copy)` });
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
+  function handleDuplicateProject(p: Project) {
+    setCopyingProject({ ...p, id: NIL_UUID, name: `${p.name} (copy)` });
+  }
+
+  /** Open the action menu for a server row, anchored below the ⋮ button. */
+  function openServerMenu(s: ServerSummary, anchor: HTMLElement) {
+    const r = anchor.getBoundingClientRect();
+    const items: ContextMenuItem[] = [
+      {
+        label: "Add project",
+        icon: <Plus className="h-3.5 w-3.5" />,
+        onClick: () => setEditingProject({ forServer: s.id }),
+      },
+      {
+        label: "Edit",
+        icon: <Settings2 className="h-3.5 w-3.5" />,
+        onClick: () => setEditingServer(s),
+      },
+      {
+        label: "Copy",
+        icon: <CopyIcon className="h-3.5 w-3.5" />,
+        onClick: () => void handleDuplicateServer(s),
+      },
+      {
+        label: "Test connection",
+        icon: <Plug className="h-3.5 w-3.5" />,
+        onClick: () => void handleTest(s.id),
+      },
+      { separator: true, label: "", onClick: () => {} },
+      {
+        label: "Delete",
+        icon: <Trash2 className="h-3.5 w-3.5" />,
+        danger: true,
+        onClick: () => setDeletingServer(s),
+      },
+    ];
+    setMenu({ x: r.right - 4, y: r.bottom + 2, items });
+  }
+
+  /** Open the action menu for a project row. */
+  function openProjectMenu(p: Project, anchor: HTMLElement) {
+    const r = anchor.getBoundingClientRect();
+    const items: ContextMenuItem[] = [
+      {
+        label: "Edit",
+        icon: <Settings2 className="h-3.5 w-3.5" />,
+        onClick: () => setEditingProject(p),
+      },
+      {
+        label: "Copy",
+        icon: <CopyIcon className="h-3.5 w-3.5" />,
+        onClick: () => handleDuplicateProject(p),
+      },
+      { separator: true, label: "", onClick: () => {} },
+      {
+        label: "Delete",
+        icon: <Trash2 className="h-3.5 w-3.5" />,
+        danger: true,
+        onClick: () => setDeletingProject(p),
+      },
+    ];
+    setMenu({ x: r.right - 4, y: r.bottom + 2, items });
   }
 
   return (
@@ -142,43 +241,41 @@ export function Sidebar() {
                     <ChevronRight className="h-3.5 w-3.5" />
                   )}
                 </button>
-                <ServerIcon className="h-4 w-4 shrink-0 text-primary" />
+                {s.protocol === "ssh" ? (
+                  <ServerIcon
+                    className="h-4 w-4 shrink-0 text-primary"
+                    aria-label="SSH server"
+                  />
+                ) : (
+                  <Network
+                    className="h-4 w-4 shrink-0 text-amber-500"
+                    aria-label={`${s.protocol.toUpperCase()} server`}
+                  />
+                )}
                 <span className="flex-1 truncate font-medium">{s.name}</span>
-                {/* Keep layout stable: always render the action strip and
-                    fade it in on hover. `pointer-events-none` keeps it
-                    unclickable while invisible. */}
+                {s.protocol !== "ssh" && (
+                  <span className="rounded bg-amber-500/15 px-1 py-0 text-[9px] font-semibold uppercase leading-4 text-amber-600 dark:text-amber-400">
+                    {s.protocol}
+                  </span>
+                )}
+                {/* Hover-visible action strip: Connect + ⋮. The dropdown
+                    groups Edit/Copy/Test/Delete under the kebab to keep
+                    the row calm. */}
                 <div className="pointer-events-none flex items-center gap-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
                   <button
-                    title="Open session"
+                    title="Connect"
                     className="rounded p-1 hover:bg-background"
                     onClick={() => handleOpen(s)}
                   >
                     <Play className="h-3 w-3" />
                   </button>
                   <button
-                    title="Test connection"
+                    title="More actions"
+                    aria-label="More actions"
                     className="rounded p-1 hover:bg-background"
-                    onClick={() => handleTest(s.id)}
+                    onClick={(e) => openServerMenu(s, e.currentTarget)}
                   >
-                    <Plug className="h-3 w-3" />
-                  </button>
-                  <button
-                    title="Edit"
-                    className="rounded p-1 hover:bg-background"
-                    onClick={() => setEditingServer(s)}
-                  >
-                    <Settings2 className="h-3 w-3" />
-                  </button>
-                  <button
-                    title="Delete"
-                    className="rounded p-1 hover:bg-background"
-                    onClick={async () => {
-                      if (!confirm(`Delete server ${s.name}?`)) return;
-                      await removeServer(s.id);
-                      await refreshProjects();
-                    }}
-                  >
-                    <Trash2 className="h-3 w-3 text-destructive" />
+                    <MoreVertical className="h-3.5 w-3.5" />
                   </button>
                 </div>
               </div>
@@ -194,39 +291,28 @@ export function Sidebar() {
                       <span className="flex-1 truncate">{p.name}</span>
                       <div className="pointer-events-none flex items-center gap-0.5 opacity-0 transition-opacity group-hover/item:pointer-events-auto group-hover/item:opacity-100">
                         <button
-                          title="Open session"
+                          title="Connect"
                           className="rounded p-1 hover:bg-background"
                           onClick={() => handleOpen(s, p)}
                         >
                           <Play className="h-3 w-3" />
                         </button>
                         <button
-                          title="Edit"
+                          title="More actions"
+                          aria-label="More actions"
                           className="rounded p-1 hover:bg-background"
-                          onClick={() => setEditingProject(p)}
+                          onClick={(e) => openProjectMenu(p, e.currentTarget)}
                         >
-                          <Settings2 className="h-3 w-3" />
-                        </button>
-                        <button
-                          title="Delete"
-                          className="rounded p-1 hover:bg-background"
-                          onClick={async () => {
-                            if (!confirm(`Delete project ${p.name}?`)) return;
-                            await removeProject(p.id);
-                          }}
-                        >
-                          <Trash2 className="h-3 w-3 text-destructive" />
+                          <MoreVertical className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     </div>
                   ))}
-                  <button
-                    className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                    onClick={() => setEditingProject({ forServer: s.id })}
-                  >
-                    <Plus className="h-3 w-3" />
-                    Add project
-                  </button>
+                  {projs.length === 0 && (
+                    <div className="px-2 py-1 text-[11px] italic text-muted-foreground">
+                      No projects yet
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -272,6 +358,18 @@ export function Sidebar() {
         />
       )}
 
+      {copyingServer && (
+        <ServerDialog
+          serverId={null}
+          initialServer={copyingServer}
+          onClose={() => setCopyingServer(null)}
+          onSaved={() => {
+            setCopyingServer(null);
+            void refreshServers();
+          }}
+        />
+      )}
+
       {editingProject && (
         <ProjectDialog
           project={"id" in editingProject ? editingProject : null}
@@ -280,6 +378,62 @@ export function Sidebar() {
           }
           onClose={() => setEditingProject(null)}
           onSaved={() => refreshProjects()}
+        />
+      )}
+
+      {copyingProject && (
+        <ProjectDialog
+          project={copyingProject}
+          onClose={() => setCopyingProject(null)}
+          onSaved={() => {
+            setCopyingProject(null);
+            void refreshProjects();
+          }}
+        />
+      )}
+
+      {deletingServer && (
+        <DeleteConfirmDialog
+          itemName={`server "${deletingServer.name}"`}
+          description={
+            <span>
+              All projects attached to this server will be removed too.
+            </span>
+          }
+          onConfirm={async () => {
+            try {
+              await removeServer(deletingServer.id);
+              await refreshProjects();
+            } catch (e) {
+              // eslint-disable-next-line no-console
+              console.error("delete server:", e);
+            }
+          }}
+          onClose={() => setDeletingServer(null)}
+        />
+      )}
+
+      {deletingProject && (
+        <DeleteConfirmDialog
+          itemName={`project "${deletingProject.name}"`}
+          onConfirm={async () => {
+            try {
+              await removeProject(deletingProject.id);
+            } catch (e) {
+              // eslint-disable-next-line no-console
+              console.error("delete project:", e);
+            }
+          }}
+          onClose={() => setDeletingProject(null)}
+        />
+      )}
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menu.items}
+          onClose={() => setMenu(null)}
         />
       )}
     </aside>

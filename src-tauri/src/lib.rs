@@ -11,6 +11,7 @@ pub mod errors;
 pub mod ftp;
 pub mod models;
 pub mod rsync;
+pub mod settings;
 pub mod ssh;
 pub mod state;
 pub mod vault;
@@ -87,11 +88,16 @@ pub fn run() {
             commands::git::git_status,
             commands::git::git_log,
             commands::git::git_files_in_commit,
+            // Terminal history (per-server, stored in vault)
+            commands::history::history_list,
+            commands::history::history_add,
+            commands::history::history_clear,
             // Snippets
             commands::snippets::snippet_list,
             commands::snippets::snippet_save,
             commands::snippets::snippet_delete,
             commands::snippets::snippet_run,
+            commands::snippets::snippet_resolve,
             // Services (systemd)
             commands::services::service_list,
             commands::services::service_action,
@@ -105,6 +111,15 @@ pub fn run() {
             commands::docker::docker_compose_logs_stop,
             commands::docker::docker_compose_exec_shell,
             commands::docker::session_capabilities,
+            // System terminal (local shell or SSH in a native window)
+            commands::shell::open_local_terminal,
+            commands::shell::open_ssh_terminal,
+            // Settings (vault location + portable mode)
+            commands::settings::get_settings,
+            commands::settings::set_vault_dir,
+            commands::settings::reset_vault_dir,
+            commands::settings::set_idle_timeout_minutes,
+            commands::settings::restart_app,
             // Cloudflare
             commands::cloudflare::cf_has_token,
             commands::cloudflare::cf_set_token,

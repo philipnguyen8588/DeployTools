@@ -51,25 +51,24 @@ pub async fn open(
 
     drop(handle); // release the handle lock — we only need it for channel open
 
-    // If this session was opened for a specific project, auto-cd to it.
-    if let Some(project) = &session.project {
-        // Quote the path — prevents a malicious remote_path from breaking the shell.
-        let quoted = crate::ssh::quote::shell_single_quote(&project.remote_path);
-        let init = format!("cd {quoted} 2>/dev/null && clear\n");
-        channel
-            .data(init.as_bytes())
-            .await
-            .map_err(|e| AppError::Ssh(format!("initial cd: {e}")))?;
-    }
-
     // Channel used by the command layer to push user keystrokes / resize / close.
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<TerminalCommand>();
+
+    // Initial auto-cd command — sent only AFTER the first data chunk
+    // from the server (MOTD / last-login banner / first prompt) has been
+    // forwarded to the UI. Sending it any earlier races the banner and
+    // the user never sees "Welcome to Ubuntu …" on screen.
+    let init_cmd: Option<String> = session.project.as_ref().map(|project| {
+        let quoted = crate::ssh::quote::shell_single_quote(&project.remote_path);
+        format!("cd {quoted} 2>/dev/null\n")
+    });
 
     // Spawn the driver task.
     let app = session.app.clone();
     let term_id = terminal_id.clone();
     let session_ref = session.clone();
     tokio::spawn(async move {
+        let mut pending_init = init_cmd;
         let event_name = format!("term://{}", term_id);
         let exit_event = format!("term-exit://{}", term_id);
 
@@ -98,11 +97,20 @@ pub async fn open(
                         Some(ChannelMsg::Data { data }) => {
                             let bytes = data.to_vec();
                             let _ = app.emit(&event_name, bytes);
+                            // The banner is on its way — now it's safe to
+                            // inject the `cd` without stepping on the
+                            // MOTD / prompt rendering.
+                            if let Some(cmd) = pending_init.take() {
+                                let _ = channel.data(cmd.as_bytes()).await;
+                            }
                         }
                         Some(ChannelMsg::ExtendedData { data, ext: _ }) => {
                             // stderr over an interactive shell — merge.
                             let bytes = data.to_vec();
                             let _ = app.emit(&event_name, bytes);
+                            if let Some(cmd) = pending_init.take() {
+                                let _ = channel.data(cmd.as_bytes()).await;
+                            }
                         }
                         Some(ChannelMsg::ExitStatus { exit_status }) => {
                             let _ = app.emit(&exit_event, exit_status);

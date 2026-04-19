@@ -8,7 +8,7 @@ import {
   ScrollText,
   TerminalSquare,
   AlertTriangle,
-  Search,
+  Square as StopIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -20,7 +20,6 @@ import type {
   SessionCapabilities,
 } from "@/lib/types";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "./ConfirmDialog";
 import { useProjects } from "@/stores/projects";
@@ -28,6 +27,14 @@ import { useProjects } from "@/stores/projects";
 interface Props {
   sessionId: string;
   projectId: string;
+  /** Filter query lifted to the shared BottomPanel tab-strip toolbar. */
+  filter?: string;
+  /** Bump this to force a reload (used by the shared Refresh button).
+   *  Initial mount also loads, so 0 is fine as the starting value. */
+  refreshNonce?: number;
+  /** Reports `busy` state back to the parent so the shared toolbar can
+   *  show the spinning refresh icon. */
+  onBusyChange?: (busy: boolean) => void;
 }
 
 /**
@@ -35,12 +42,16 @@ interface Props {
  * tab. Parses the compose file from disk, merges with `docker compose ps`
  * runtime state, and exposes per-service actions.
  */
-export function DockerPanel({ sessionId, projectId }: Props) {
+export function DockerPanel({
+  sessionId,
+  projectId,
+  filter = "",
+  refreshNonce = 0,
+  onBusyChange,
+}: Props) {
   const [info, setInfo] = useState<DockerInfo | null>(null);
   const [statuses, setStatuses] = useState<ServiceStatus[]>([]);
   const [caps, setCaps] = useState<SessionCapabilities | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [filter, setFilter] = useState("");
   const confirm = useConfirm();
   const project = useProjects((s) =>
     s.projects.find((p) => p.id === projectId),
@@ -114,9 +125,65 @@ export function DockerPanel({ sessionId, projectId }: Props) {
   }, [info, statuses, filter]);
 
   async function refresh() {
-    setBusy(true);
-    await Promise.all([loadInfo(), loadPs()]);
-    setBusy(false);
+    onBusyChange?.(true);
+    try {
+      await Promise.all([loadInfo(), loadPs()]);
+    } finally {
+      onBusyChange?.(false);
+    }
+  }
+
+  // External "Refresh" trigger from the BottomPanel toolbar.
+  useEffect(() => {
+    if (refreshNonce <= 0) return;
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshNonce]);
+
+  /**
+   * Build the argv string for a Compose action and open a new terminal
+   * tab that runs it. Moving every action to the terminal (instead of a
+   * background exec) gives the user live, scrollable output, the ability
+   * to Ctrl+C, and a familiar "watch it run" workflow.
+   */
+  function runInTerminal(args: {
+    action: string;
+    tail: string; // the full `docker compose …` argv after `compose`
+    label: string;
+    confirmText?: string;
+    dangerConfirm?: boolean;
+    confirmDescription?: React.ReactNode;
+  }) {
+    const cd = remoteDir ? `cd ${shellQuote(remoteDir)} && ` : "";
+    const cmd = `${cd}docker compose ${args.tail}`;
+    const spawn = () => {
+      window.dispatchEvent(
+        new CustomEvent("open-terminal", {
+          detail: {
+            sessionId,
+            label: args.label,
+            seed: cmd,
+          },
+        }),
+      );
+    };
+    if (args.confirmText) {
+      void confirm({
+        title: `${args.action}?`,
+        description:
+          args.confirmDescription ?? (
+            <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+              {cmd}
+            </div>
+          ),
+        confirmText: args.confirmText,
+        danger: args.dangerConfirm,
+      }).then((ok) => {
+        if (ok) spawn();
+      });
+    } else {
+      spawn();
+    }
   }
 
   async function runAction(
@@ -124,66 +191,46 @@ export function DockerPanel({ sessionId, projectId }: Props) {
     service?: string,
     needsConfirm = false,
   ) {
-    if (needsConfirm) {
-      const ok = await confirm({
-        title: `${action}${service ? ` ${service}` : ""}?`,
-        description: (
-          <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
-            docker compose {action}
-            {service ? ` ${service}` : ""}
-          </div>
-        ),
-        confirmText: action,
-        danger: action === "down",
-      });
-      if (!ok) return;
+    // Build `up -d <svc>` / `restart <svc>` / `stop <svc>` / `build <svc>` /
+    // `pull <svc>` / `down` tails. `up` always takes `-d` so the command
+    // returns quickly; the user watches logs via Logs button if needed.
+    const svc = service ?? "";
+    let tail: string;
+    switch (action) {
+      case "up":
+        tail = svc ? `up ${shellQuote(svc)} -d` : `up -d`;
+        break;
+      case "down":
+        tail = "down";
+        break;
+      default:
+        tail = svc ? `${action} ${shellQuote(svc)}` : action;
     }
-    setBusy(true);
-    const t = toast.loading(
-      `docker compose ${action}${service ? ` ${service}` : ""}…`,
-    );
-    try {
-      const code = await api.dockerComposeAction(
-        sessionId,
-        projectId,
-        action,
-        service ?? null,
-      );
-      toast.success(`exit ${code}`, { id: t });
-      await loadPs();
-    } catch (e) {
-      toast.error(`${e}`, { id: t });
-    } finally {
-      setBusy(false);
-    }
+    const label = service ? `${action}: ${service}` : `compose: ${action}`;
+    runInTerminal({
+      action: `compose ${action}${service ? ` ${service}` : ""}`,
+      tail,
+      label,
+      confirmText: needsConfirm ? action : undefined,
+      dangerConfirm: action === "down",
+    });
   }
 
   async function runOneOff(service: string) {
-    const ok = await confirm({
-      title: `Run one-off: ${service}?`,
-      description: (
-        <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
-          docker compose run --rm --remove-orphans {service}
-        </div>
-      ),
+    runInTerminal({
+      action: `run --rm ${service}`,
+      tail: `run --rm --remove-orphans ${shellQuote(service)}`,
+      label: `run: ${service}`,
       confirmText: "Run",
     });
-    if (!ok) return;
-    setBusy(true);
-    const t = toast.loading(`run --rm ${service}…`);
-    try {
-      const code = await api.dockerComposeAction(
-        sessionId,
-        projectId,
-        "run_rm",
-        service,
-      );
-      toast.success(`exit ${code}`, { id: t });
-    } catch (e) {
-      toast.error(`${e}`, { id: t });
-    } finally {
-      setBusy(false);
-    }
+  }
+
+  function runStop(service: string) {
+    runInTerminal({
+      action: `stop ${service}`,
+      tail: `stop ${shellQuote(service)}`,
+      label: `stop: ${service}`,
+    });
   }
 
   /**
@@ -304,32 +351,8 @@ export function DockerPanel({ sessionId, projectId }: Props) {
           project-wide commands (`up all`, `down`, `restart all`, …)
           were removed because a single misclick can nuke running
           services. Use the per-service buttons. */}
-      <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5">
-        <Container className="h-3.5 w-3.5 text-primary" />
-        <span className="text-xs font-medium">Docker Compose</span>
-        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-          {rows.length} services
-        </span>
-        <div className="flex-1" />
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Filter…"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="h-6 w-40 pl-6 text-xs"
-          />
-        </div>
-        <span
-          title={caps?.compose_version ?? ""}
-          className="font-mono text-[10px] text-muted-foreground"
-        >
-          {caps?.compose_version ?? ""}
-        </span>
-        <Button size="icon-sm" variant="ghost" onClick={refresh} disabled={busy}>
-          <RefreshCcw className={cn("h-3.5 w-3.5", busy && "animate-spin")} />
-        </Button>
-      </div>
+      {/* Top bar removed — title, filter and refresh now live on the
+          shared BottomPanel tab strip (right side). */}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <table className="w-full text-xs">
@@ -353,7 +376,7 @@ export function DockerPanel({ sessionId, projectId }: Props) {
                 onOneOff={() => runOneOff(svc.name)}
                 onOpenLogs={() => openLogs(svc.name)}
                 onExecShell={() => execShell(svc.name)}
-                busy={busy}
+                onStop={() => runStop(svc.name)}
               />
             ))}
           </tbody>
@@ -375,7 +398,7 @@ function Row({
   onOneOff,
   onOpenLogs,
   onExecShell,
-  busy,
+  onStop,
 }: {
   svc: ComposeService;
   status?: ServiceStatus;
@@ -387,7 +410,7 @@ function Row({
   onOneOff: () => void;
   onOpenLogs: () => void;
   onExecShell: () => void;
-  busy: boolean;
+  onStop: () => void;
 }) {
   const isRunning = status?.state === "running";
   return (
@@ -460,9 +483,9 @@ function Row({
           {svc.is_oneoff ? (
             <Button
               size="sm"
-              disabled={busy}
               onClick={onOneOff}
               className="h-6 px-2 text-[11px]"
+              title="Opens a terminal running `docker compose run --rm <svc>`"
             >
               <Play className="mr-1 h-3 w-3 text-green-400" />
               Run
@@ -472,9 +495,9 @@ function Row({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={busy}
                 onClick={() => onAction("up", svc.name, false)}
                 className="h-6 px-2 text-[11px]"
+                title="Opens a terminal running `docker compose up <svc> -d`"
               >
                 <ArrowUp className="mr-1 h-3 w-3 text-green-600 dark:text-green-400" />
                 Up
@@ -482,9 +505,9 @@ function Row({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={busy}
-                onClick={() => onAction("restart", svc.name, true)}
+                onClick={() => onAction("restart", svc.name, false)}
                 className="h-6 px-2 text-[11px]"
+                title="Opens a terminal running `docker compose restart <svc>`"
               >
                 <RefreshCcw className="mr-1 h-3 w-3 text-yellow-600 dark:text-yellow-400" />
                 Restart
@@ -492,9 +515,20 @@ function Row({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={busy}
+                disabled={!isRunning}
+                onClick={onStop}
+                className="h-6 px-2 text-[11px]"
+                title="Opens a terminal running `docker compose stop <svc>`"
+              >
+                <StopIcon className="mr-1 h-3 w-3 text-red-600 dark:text-red-400" />
+                Stop
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
                 onClick={() => onAction("build", svc.name, false)}
                 className="h-6 px-2 text-[11px]"
+                title="Opens a terminal running `docker compose build <svc>`"
               >
                 <Hammer className="mr-1 h-3 w-3 text-orange-600 dark:text-orange-400" />
                 Build

@@ -52,8 +52,15 @@ impl FtpSession {
                 ));
             }
         };
+        // Anonymous FTP: empty user → "anonymous" + (empty password OK).
+        // Many public FTP hosts only accept literal "anonymous" / "ftp".
+        let user = if server.user.is_empty() {
+            "anonymous"
+        } else {
+            server.user.as_str()
+        };
         stream
-            .login(server.user.as_str(), password.expose())
+            .login(user, password.expose())
             .await
             .map_err(|e| AppError::Other(format!("ftp login: {e}")))?;
         // Binary transfer mode — mandatory for reliable non-text uploads.

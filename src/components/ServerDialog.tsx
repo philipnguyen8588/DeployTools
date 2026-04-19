@@ -19,6 +19,10 @@ import { Label } from "./ui/label";
 
 interface Props {
   serverId: string | null;
+  /** Seed the form with this data instead of the empty template. Used
+   *  by the "Copy" action — pass a clone of an existing server with
+   *  `id` reset to nil so Save creates a new record. */
+  initialServer?: Server | null;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -40,17 +44,25 @@ const DEFAULT_PORT: Record<"ssh" | "ftp" | "ftps", number> = {
   ftps: 21,
 };
 
-export function ServerDialog({ serverId, onClose, onSaved }: Props) {
-  const [server, setServer] = useState<Server>(emptyServer);
-  const [authKind, setAuthKind] = useState<"password" | "private_key">("password");
+export function ServerDialog({
+  serverId,
+  initialServer,
+  onClose,
+  onSaved,
+}: Props) {
+  const [server, setServer] = useState<Server>(initialServer ?? emptyServer);
+  const [authKind, setAuthKind] = useState<"password" | "private_key">(
+    initialServer?.auth.kind ?? "password",
+  );
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     // Load the full server record (including decrypted auth) from the
-    // backend when editing, so the form prefills.
-    if (!serverId) return;
+    // backend when editing an existing server. Skipped when a prefill
+    // was provided (Copy flow) or when creating fresh (serverId null).
+    if (!serverId || initialServer) return;
     let cancelled = false;
     setLoading(true);
     (async () => {
@@ -68,7 +80,7 @@ export function ServerDialog({ serverId, onClose, onSaved }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [serverId]);
+  }, [serverId, initialServer]);
 
   async function pickKey() {
     // Windows IFileOpenDialog validates the typed filename against the
@@ -105,9 +117,13 @@ export function ServerDialog({ serverId, onClose, onSaved }: Props) {
     }
     const probe = { ...server, auth };
 
-    // Quick client-side sanity check.
-    if (!probe.host || !probe.user) {
-      toast.error("Host and user are required");
+    // Quick client-side sanity check. FTP allows anonymous (empty user).
+    if (!probe.host) {
+      toast.error("Host is required");
+      return;
+    }
+    if (probe.protocol === "ssh" && !probe.user) {
+      toast.error("User is required for SSH");
       return;
     }
     if (probe.auth.kind === "password" && !probe.auth.password) {
@@ -243,10 +259,19 @@ export function ServerDialog({ serverId, onClose, onSaved }: Props) {
               />
             </div>
             <div className="col-span-2 space-y-1.5">
-              <Label>User</Label>
+              <Label>
+                User
+                {server.protocol !== "ssh" && (
+                  <span className="ml-1 text-xs text-muted-foreground">
+                    (leave empty for anonymous FTP)
+                  </span>
+                )}
+              </Label>
               <Input
-                required
-                placeholder="deploy"
+                required={server.protocol === "ssh"}
+                placeholder={
+                  server.protocol === "ssh" ? "deploy" : "anonymous or blank"
+                }
                 value={server.user}
                 onChange={(e) =>
                   setServer({ ...server, user: e.target.value })
@@ -306,26 +331,52 @@ export function ServerDialog({ serverId, onClose, onSaved }: Props) {
           ) : (
             <>
               <div className="space-y-1.5">
-                <Label>Private key file</Label>
+                <Label>Private key — path OR pasted content</Label>
                 <div className="flex gap-2">
-                  <Input
-                    readOnly
-                    placeholder="~/.ssh/id_ed25519"
+                  <textarea
+                    rows={
+                      server.auth.kind === "private_key" &&
+                      server.auth.key_path.includes("\n")
+                        ? 6
+                        : 1
+                    }
+                    placeholder={"~/.ssh/id_ed25519\n…or paste the key starting with -----BEGIN OPENSSH PRIVATE KEY-----"}
                     value={
                       server.auth.kind === "private_key"
                         ? server.auth.key_path
                         : ""
                     }
+                    onChange={(e) =>
+                      setServer({
+                        ...server,
+                        auth: {
+                          kind: "private_key",
+                          key_path: e.target.value,
+                          passphrase:
+                            server.auth.kind === "private_key"
+                              ? server.auth.passphrase
+                              : null,
+                        },
+                      })
+                    }
+                    spellCheck={false}
+                    className="flex w-full rounded-md border border-input bg-background px-3 py-1.5 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   />
                   <Button
                     type="button"
                     variant="outline"
                     size="icon"
                     onClick={pickKey}
+                    title="Pick a key file…"
                   >
                     <FolderOpen className="h-4 w-4" />
                   </Button>
                 </div>
+                <p className="text-[11px] text-muted-foreground">
+                  A single-line path loads the file at runtime; pasted PEM
+                  content (starts with <code className="font-mono">-----BEGIN</code>)
+                  is stored encrypted in the vault and used directly.
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label>Passphrase (optional)</Label>

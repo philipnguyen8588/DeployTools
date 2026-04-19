@@ -92,7 +92,14 @@ pub async fn connect(server: &Server) -> AppResult<SshClient> {
             .await
             .map_err(|e| AppError::Ssh(format!("auth: {e}")))?,
         AuthMethod::PrivateKey { key_path, passphrase } => {
-            let pem = tokio::fs::read_to_string(key_path).await?;
+            // Accept either an inline PEM block (starts with "-----BEGIN")
+            // or a path to a key file. Pasting the key directly avoids
+            // making the user save a temporary file just to connect.
+            let pem = if key_path.trim_start().starts_with("-----BEGIN") {
+                key_path.clone()
+            } else {
+                tokio::fs::read_to_string(key_path).await?
+            };
             let keypair = decode_secret_key(
                 &pem,
                 passphrase.as_ref().map(Secret::expose).filter(|s| !s.is_empty()),

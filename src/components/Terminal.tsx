@@ -6,15 +6,40 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useTheme } from "next-themes";
 
 import * as api from "@/lib/api";
+import { useSessions } from "@/stores/sessions";
 
 interface Props {
   sessionId: string;
+  /** Server id — used to key the terminal command history. When not
+   *  supplied, history capture is skipped (no harm). */
+  serverId?: string;
+  /** True when this Terminal's tab is the currently selected one.
+   *  The component auto-focuses xterm on every false→true transition
+   *  so the user can start typing without clicking first. */
+  isActive?: boolean;
+  /** Parent bumps this counter to ask the terminal to re-grab keyboard
+   *  focus (e.g. after a modal closes). Any change in value — up or
+   *  down, as long as it differs — re-runs the focus effect. */
+  focusTrigger?: number;
   /**
    * Optional command to feed into the shell immediately after the PTY
    * is ready. The string is sent verbatim (no shell quoting) followed
    * by a newline. Used to seed "tail logs" / "exec shell" tabs.
    */
   seed?: string;
+  /**
+   * Notify the parent when the backend PTY is ready (pass the terminal
+   * id) and when it is torn down (pass null). Parent uses this to drive
+   * the shared toolbar's Snippets button — the button needs the pty id
+   * to call `term_write`.
+   */
+  onTerminalReady?: (terminalId: string | null) => void;
+  /**
+   * Called every time the server pushes output into this terminal. The
+   * parent uses it to paint an "unread" dot on non-active terminal
+   * tabs. Rate-limited by the caller if needed.
+   */
+  onServerOutput?: () => void;
 }
 
 /**
@@ -69,11 +94,69 @@ const THEME_LIGHT = {
   brightWhite: "#8c959f",
 };
 
-export function Terminal({ sessionId, seed }: Props) {
+export function Terminal({
+  sessionId,
+  serverId,
+  isActive,
+  focusTrigger,
+  seed,
+  onTerminalReady,
+  onServerOutput,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const terminalIdRef = useRef<string | null>(null);
   const { resolvedTheme } = useTheme();
+
+  // Keep the latest server-output callback in a ref so the listen
+  // callback (set up once at mount) always calls the most recent
+  // parent closure — important because the parent updates its
+  // active-tab comparison every render and React won't re-fire our
+  // [sessionId]-only effect.
+  const onServerOutputRef = useRef(onServerOutput);
+  useEffect(() => {
+    onServerOutputRef.current = onServerOutput;
+  }, [onServerOutput]);
+
+  // Auto-focus xterm on every false→true transition of isActive, plus
+  // resize once the container actually has a non-zero size so the
+  // first keystrokes appear on a correctly sized grid. Wrapped in a
+  // 0 ms rAF so focus lands after the layout has settled.
+  useEffect(() => {
+    if (!isActive) return;
+    const t = window.setTimeout(() => {
+      try {
+        termRef.current?.focus();
+      } catch {
+        /* terminal not ready yet */
+      }
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [isActive, focusTrigger]);
+
+  // Global: when this terminal is the active tab and the user presses
+  // a plain key while nothing input-able has focus (e.g. after a modal
+  // was closed via Esc), grab keyboard focus so they can type. We
+  // avoid hijacking if the target is already in a form field.
+  useEffect(() => {
+    if (!isActive) return;
+    const handler = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      // Skip modifier-only and navigation shortcuts that shouldn't steal focus.
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      termRef.current?.focus();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isActive]);
 
   // (Re)theme on theme change.
   useEffect(() => {
@@ -145,6 +228,7 @@ export function Terminal({ sessionId, seed }: Props) {
           return;
         }
         terminalIdRef.current = tid;
+        onTerminalReady?.(tid);
 
         // Send the seeded command once the shell is ready. We wait a
         // short tick for the server to paint the first prompt so our
@@ -158,9 +242,14 @@ export function Terminal({ sessionId, seed }: Props) {
           }, 250);
         }
 
+        const bump = () => useSessions.getState().bumpActivity(sessionId);
         unlistenData = await listen<number[] | Uint8Array>(
           `term://${tid}`,
           (event) => {
+            // Every chunk of server output counts as activity — keeps
+            // long-running `tail -f` sessions from timing out.
+            bump();
+            onServerOutputRef.current?.();
             const data = event.payload as unknown;
             if (data instanceof Uint8Array) {
               term.write(data);
@@ -173,10 +262,39 @@ export function Terminal({ sessionId, seed }: Props) {
         );
         unlistenExit = await listen<number>(`term-exit://${tid}`, () => {
           term.writeln("\r\n\x1b[90m[session closed]\x1b[0m");
+          onTerminalReady?.(null);
         });
+
+        // Local line buffer used to capture history: we accumulate every
+        // char the user types and commit the line to `history_add` when
+        // they press Enter. Arrow keys / readline tricks aren't fully
+        // supported — we just strip obvious control bytes so the entry
+        // is legible.
+        let historyBuf = "";
+        const commitHistory = () => {
+          const line = historyBuf.trim();
+          historyBuf = "";
+          if (!serverId) return;
+          if (!line || /[\x00-\x08\x0b-\x1a\x1c-\x1f]/.test(line)) return;
+          void api.historyAdd(serverId, line).catch(() => {});
+        };
 
         term.onData((data) => {
           if (terminalIdRef.current) {
+            bump();
+            // Update the local history buffer before forwarding to the PTY.
+            for (const ch of data) {
+              if (ch === "\r" || ch === "\n") {
+                commitHistory();
+              } else if (ch === "\x7f" || ch === "\b") {
+                historyBuf = historyBuf.slice(0, -1);
+              } else if (ch === "\x03") {
+                // Ctrl+C aborts the current line — drop buffer.
+                historyBuf = "";
+              } else if (ch >= " " || ch === "\t") {
+                historyBuf += ch;
+              }
+            }
             void api.termWrite(sessionId, terminalIdRef.current, data);
           }
         });
@@ -190,8 +308,17 @@ export function Terminal({ sessionId, seed }: Props) {
       }
     })();
 
-    // Refit on container resize.
+    // Refit on container resize, but skip when the container is hidden
+    // (display:none via inactive tab). Fitting to a 0×0 rect rewrites
+    // xterm's internal buffer dimensions to 0, which truncates the
+    // scrollback — switching back to the tab would then render the
+    // truncated (empty) buffer. Guarding on offsetParent === null and
+    // width > 0 preserves the full history across tab switches.
     const ro = new ResizeObserver(() => {
+      if (!containerRef.current) return;
+      if (containerRef.current.offsetParent === null) return;
+      const r = containerRef.current.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return;
       try {
         fit.fit();
       } catch {
@@ -209,6 +336,7 @@ export function Terminal({ sessionId, seed }: Props) {
       if (terminalIdRef.current) {
         void api.termClose(sessionId, terminalIdRef.current).catch(() => {});
       }
+      onTerminalReady?.(null);
       term.dispose();
       termRef.current = null;
     };

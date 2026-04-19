@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { Zap, Trash2 } from "lucide-react";
+import { Zap, Trash2, FolderOpen, Network } from "lucide-react";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 
 import * as api from "@/lib/api";
+import { useProjects } from "@/stores/projects";
+import { useSessions } from "@/stores/sessions";
 import { Button } from "./ui/button";
 import { useConfirm } from "./ConfirmDialog";
 
@@ -23,6 +25,30 @@ interface Props {
 export function DeployPanel({ projectId, projectName, sessionId }: Props) {
   const [running, setRunning] = useState(false);
   const confirm = useConfirm();
+  const project = useProjects((s) =>
+    s.projects.find((p) => p.id === projectId),
+  );
+  const sessionTab = useSessions((s) =>
+    s.tabs.find((t) => t.session.id === sessionId),
+  );
+  const serverId = sessionTab?.session.server_id ?? null;
+
+  async function openLocalTerminal() {
+    try {
+      await api.openLocalTerminal(project?.local_path ?? undefined);
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
+  async function openSshTerminal() {
+    if (!serverId) return;
+    try {
+      await api.openSshTerminal(serverId, project?.remote_path ?? undefined);
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
 
   async function syncSftp(deleteExtraneous: boolean) {
     if (!projectId || running) return;
@@ -84,6 +110,28 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
     >
       <span className="text-xs font-medium">{projectName}</span>
       <div className="flex-1" />
+
+      <Button
+        size="xs"
+        variant="outline"
+        onClick={openLocalTerminal}
+        title="Open the system terminal (Windows Terminal / cmd) at the project's local path"
+      >
+        <FolderOpen className="mr-1 h-3 w-3" />
+        Local
+      </Button>
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={!serverId}
+        onClick={openSshTerminal}
+        title="Open a new system terminal running ssh to this server"
+      >
+        <Network className="mr-1 h-3 w-3" />
+        SSH
+      </Button>
+
+      <div className="mx-1 h-4 w-px bg-border" />
 
       <Button
         size="xs"
