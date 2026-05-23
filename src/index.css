@@ -35,37 +35,38 @@
     --radius: 0.5rem;
   }
 
-  /* Dark theme — Docker Desktop-inspired. Deep blue-black background
-     (#17191E), slightly elevated cards/sidebar (#1C1E26), Docker's
-     signature primary blue (#1D63ED), low-contrast borders. */
+  /* Dark theme — soft gray with a hint of blue. Kept significantly
+     lighter than pure black so panels feel tactile instead of "voidy".
+     The background sits around #282B30; cards / popovers step up a few
+     points each for gentle elevation. */
   .dark {
-    --background: 227 14% 10%;           /* #17191E */
+    --background: 220 8% 17%;            /* #282B30 */
     --foreground: 220 15% 92%;           /* #E6E9EF */
 
-    --card: 225 14% 13%;                 /* #1C1E26 */
+    --card: 220 7% 21%;                  /* #32353A */
     --card-foreground: 220 15% 92%;
 
-    --popover: 225 14% 14%;
+    --popover: 220 7% 22%;               /* #34373D */
     --popover-foreground: 220 15% 92%;
 
-    --primary: 217 85% 52%;              /* #1D63ED (Docker blue) */
+    --primary: 217 85% 58%;              /* a touch brighter on the grey bg */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 223 12% 18%;
+    --secondary: 220 6% 26%;             /* #3D4045 */
     --secondary-foreground: 220 15% 92%;
 
-    --muted: 223 12% 18%;
-    --muted-foreground: 220 11% 66%;     /* #A0A6B2 */
+    --muted: 220 6% 26%;
+    --muted-foreground: 220 8% 70%;      /* readable against grey cards */
 
-    --accent: 223 12% 22%;               /* #2A2D35 (hover / selected) */
+    --accent: 220 5% 31%;                /* #474A4F (hover / selected) */
     --accent-foreground: 220 15% 95%;
 
-    --destructive: 0 70% 55%;
+    --destructive: 0 70% 58%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 222 10% 20%;               /* very subtle */
-    --input: 223 12% 16%;
-    --ring: 217 85% 52%;
+    --border: 220 6% 30%;                /* visible but not loud */
+    --input: 220 7% 24%;
+    --ring: 217 85% 58%;
   }
 }
 

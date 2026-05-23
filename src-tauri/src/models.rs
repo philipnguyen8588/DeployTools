@@ -96,6 +96,18 @@ pub struct Server {
     /// a warning (MITM protection). Only applies to SSH.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_key_fingerprint: Option<String>,
+
+    /// Optional group membership. `None` means the server sits in the
+    /// virtual "Ungrouped" bucket at the top of the sidebar — the
+    /// migration-free default for vaults that predate groups.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<Uuid>,
+
+    /// Position within its group (ascending). Assigned via
+    /// `commands::server::reorder_servers`. Defaults to 0 which means
+    /// the server falls back to name-sort until the user drags it.
+    #[serde(default)]
+    pub order: i32,
 }
 
 fn default_port() -> u16 {
@@ -120,6 +132,11 @@ pub struct Project {
     /// `docker-compose.{yml,yaml}` and `compose.{yml,yaml}` at the root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compose_file: Option<PathBuf>,
+
+    /// Position within its parent server (ascending). Old vaults default
+    /// to 0 — projects then sort by name until the user drags them.
+    #[serde(default)]
+    pub order: i32,
 }
 
 fn default_rsync_flags() -> String {
@@ -145,6 +162,11 @@ pub struct VaultData {
     pub servers: Vec<Server>,
     #[serde(default)]
     pub projects: Vec<Project>,
+    /// Server groups — user-defined labels that cluster servers in the
+    /// sidebar. Old vaults have none; the UI renders an implicit
+    /// "Ungrouped" bucket for servers with `group_id = None`.
+    #[serde(default)]
+    pub groups: Vec<ServerGroup>,
     /// Cloudflare API token. When absent, the Cloudflare panel is
     /// disabled in the UI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -156,6 +178,20 @@ pub struct VaultData {
     /// `commands::history::HISTORY_CAP`.
     #[serde(default)]
     pub terminal_history: Vec<TerminalHistoryEntry>,
+}
+
+/// A named bucket that groups a handful of related servers together in
+/// the sidebar — e.g. "Production", "Staging", "Clients". Groups can be
+/// reordered (via `order`) and renamed; servers with `group_id = None`
+/// render in a synthetic "Ungrouped" bucket that sits above the real
+/// groups and is never persisted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerGroup {
+    pub id: Uuid,
+    pub name: String,
+    /// Ascending sort position. Ties break by name.
+    #[serde(default)]
+    pub order: i32,
 }
 
 // ---------- Snippets ----------
@@ -209,6 +245,9 @@ pub struct ServerSummary {
     pub auth_kind: &'static str,
     pub protocol: Protocol,
     pub has_fingerprint: bool,
+    /// Group membership — `None` for the virtual "Ungrouped" bucket.
+    pub group_id: Option<Uuid>,
+    pub order: i32,
 }
 
 impl From<&Server> for ServerSummary {
@@ -225,6 +264,8 @@ impl From<&Server> for ServerSummary {
             },
             protocol: s.protocol,
             has_fingerprint: s.host_key_fingerprint.is_some(),
+            group_id: s.group_id,
+            order: s.order,
         }
     }
 }
@@ -253,12 +294,44 @@ mod tests {
                 auth: AuthMethod::Password {
                     password: Secret("p".into()),
                 },
+                protocol: Protocol::default(),
                 host_key_fingerprint: None,
+                group_id: None,
+                order: 0,
             }],
-            projects: vec![],
+            ..Default::default()
         };
         let j = serde_json::to_string(&data).unwrap();
         let back: VaultData = serde_json::from_str(&j).unwrap();
         assert_eq!(back.servers.len(), 1);
+    }
+
+    /// Pre-group vaults must deserialize cleanly — all new fields have
+    /// `#[serde(default)]` so missing keys fall back to sensible values.
+    #[test]
+    fn legacy_vault_without_groups_deserializes() {
+        let legacy = r#"{
+            "servers": [{
+                "id": "11111111-1111-1111-1111-111111111111",
+                "name": "legacy",
+                "host": "10.0.0.1",
+                "port": 22,
+                "user": "root",
+                "auth": { "kind": "password", "password": "x" }
+            }],
+            "projects": [{
+                "id": "22222222-2222-2222-2222-222222222222",
+                "name": "app",
+                "server_id": "11111111-1111-1111-1111-111111111111",
+                "local_path": "/tmp",
+                "remote_path": "/srv/app"
+            }]
+        }"#;
+        let v: VaultData = serde_json::from_str(legacy).unwrap();
+        assert_eq!(v.servers.len(), 1);
+        assert_eq!(v.servers[0].group_id, None);
+        assert_eq!(v.servers[0].order, 0);
+        assert_eq!(v.projects[0].order, 0);
+        assert!(v.groups.is_empty());
     }
 }

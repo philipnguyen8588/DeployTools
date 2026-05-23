@@ -13,6 +13,7 @@
 //!      (so existing users don't lose data after upgrade)
 //!   4. Otherwise default to `<exe-dir>/vault.enc` — first run creates it
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -29,6 +30,19 @@ pub struct Settings {
     /// disabled, never auto-disconnect.
     #[serde(default)]
     pub idle_timeout_minutes: Option<u32>,
+
+    /// IDE key → absolute path to its exe. Populated from the Settings
+    /// dialog or from `ide::detect_ides` on first install.
+    /// Built-in keys: "vscode", "pycharm", "intellij", "antigravity".
+    /// Custom entries use any other key; their display label is stored
+    /// in `custom_ide_labels` (built-ins use a hardcoded label).
+    #[serde(default)]
+    pub ide_paths: HashMap<String, String>,
+
+    /// Display label for user-added custom IDEs. Keys here must also
+    /// appear in `ide_paths`. Built-in keys are NOT stored here.
+    #[serde(default)]
+    pub custom_ide_labels: HashMap<String, String>,
 }
 
 /// Built-in default when the user hasn't configured anything.

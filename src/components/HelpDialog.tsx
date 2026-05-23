@@ -189,8 +189,14 @@ export function HelpDialog({ onClose }: Props) {
               <ShortcutRow keys={["Esc"]}>
                 Close the currently open dialog
               </ShortcutRow>
+              <ShortcutRow keys={["Ctrl", "Shift", "V"]}>
+                Paste clipboard into the terminal
+              </ShortcutRow>
+              <ShortcutRow keys={["Ctrl", "Shift", "C"]}>
+                Copy terminal selection (if any)
+              </ShortcutRow>
               <ShortcutRow keys={["Right-click"]}>
-                Paste clipboard into the terminal (Windows convention)
+                Also pastes clipboard (Windows convention)
               </ShortcutRow>
               <ShortcutRow keys={["Select text"]}>
                 Auto-copies selection to clipboard (xterm convention)

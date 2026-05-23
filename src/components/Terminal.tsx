@@ -43,14 +43,14 @@ interface Props {
 }
 
 /**
- * Dark palette that matches the app's Docker Desktop-inspired theme.
- * Background is the same `--background` HSL (`#17191E`) so terminal
- * tabs blend visually with the surrounding panel.
+ * Dark palette that matches the app's theme. Background mirrors the
+ * `--background` var (`#282B30`, soft gray) so terminal tabs blend
+ * visually with the surrounding panel.
  */
 const THEME_DARK = {
-  background: "#17191E",
+  background: "#282B30",
   foreground: "#E6E9EF",
-  cursor: "#1D63ED",
+  cursor: "#4C8CEF",
   selectionBackground: "#2D4A6E",
   black: "#3A3D44",
   red: "#FF6B6B",
@@ -192,7 +192,7 @@ export function Terminal({
     term.open(containerRef.current);
     termRef.current = term;
 
-    // --- Copy on select, paste on right-click ---
+    // --- Copy on select, paste on right-click or Ctrl+Shift+V ---
     // Selecting text auto-copies to the clipboard (putty/xterm behavior).
     term.onSelectionChange(() => {
       const sel = term.getSelection();
@@ -215,6 +215,35 @@ export function Terminal({
         });
     };
     containerRef.current.addEventListener("contextmenu", onContext);
+
+    // Ctrl+Shift+V → paste, Ctrl+Shift+C → copy selection. Standard
+    // convention on GNOME Terminal / Konsole / VSCode integrated terminal.
+    // We return false from the custom handler so xterm doesn't then treat
+    // the key combo as literal input.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown") return true;
+      if (!e.ctrlKey || !e.shiftKey) return true;
+      const k = e.key.toLowerCase();
+      if (k === "v") {
+        e.preventDefault();
+        void navigator.clipboard
+          .readText()
+          .then((txt) => {
+            if (txt) term.paste(txt);
+          })
+          .catch(() => {});
+        return false;
+      }
+      if (k === "c") {
+        const sel = term.getSelection();
+        if (sel) {
+          e.preventDefault();
+          void navigator.clipboard.writeText(sel).catch(() => {});
+          return false;
+        }
+      }
+      return true;
+    });
 
     // Fit, then open the backend terminal with matching cols/rows.
     fit.fit();

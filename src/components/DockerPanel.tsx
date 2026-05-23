@@ -186,14 +186,23 @@ export function DockerPanel({
     }
   }
 
+  /**
+   * Every mutating compose action MUST pass through the confirm modal —
+   * Up / Restart / Stop / Build / Pull / Down / Run. They're destructive
+   * enough (kill running containers, rebuild images, etc.) that a single
+   * misclick shouldn't fire them. Logs + Shell are read-only and bypass
+   * the confirm entirely (handled in openLogs / execShell below).
+   *
+   * `dangerConfirm` paints the button red for the three actions that
+   * actually interrupt a running service (down / stop / restart).
+   */
   async function runAction(
     action: "up" | "down" | "restart" | "build" | "pull",
     service?: string,
-    needsConfirm = false,
   ) {
-    // Build `up -d <svc>` / `restart <svc>` / `stop <svc>` / `build <svc>` /
-    // `pull <svc>` / `down` tails. `up` always takes `-d` so the command
-    // returns quickly; the user watches logs via Logs button if needed.
+    // Build `up -d <svc>` / `restart <svc>` / `build <svc>` / `pull <svc>` /
+    // `down` tails. `up` always takes `-d` so the command returns quickly;
+    // the user watches logs via Logs button if needed.
     const svc = service ?? "";
     let tail: string;
     switch (action) {
@@ -207,12 +216,14 @@ export function DockerPanel({
         tail = svc ? `${action} ${shellQuote(svc)}` : action;
     }
     const label = service ? `${action}: ${service}` : `compose: ${action}`;
+    const isDangerous =
+      action === "down" || action === "restart";
     runInTerminal({
       action: `compose ${action}${service ? ` ${service}` : ""}`,
       tail,
       label,
-      confirmText: needsConfirm ? action : undefined,
-      dangerConfirm: action === "down",
+      confirmText: capitalize(action),
+      dangerConfirm: isDangerous,
     });
   }
 
@@ -230,6 +241,8 @@ export function DockerPanel({
       action: `stop ${service}`,
       tail: `stop ${shellQuote(service)}`,
       label: `stop: ${service}`,
+      confirmText: "Stop",
+      dangerConfirm: true,
     });
   }
 
@@ -391,6 +404,12 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
+/** "up" → "Up". Used for the Confirm button label. */
+function capitalize(s: string): string {
+  if (!s) return s;
+  return s[0].toUpperCase() + s.slice(1);
+}
+
 function Row({
   svc,
   status,
@@ -405,7 +424,6 @@ function Row({
   onAction: (
     action: "up" | "down" | "restart" | "build" | "pull",
     service?: string,
-    needsConfirm?: boolean,
   ) => void;
   onOneOff: () => void;
   onOpenLogs: () => void;
@@ -442,8 +460,16 @@ function Row({
           )}
         </span>
       </td>
-      <td className="max-w-[20ch] truncate px-3 py-1.5 font-mono text-muted-foreground">
-        {svc.image || svc.build || "—"}
+      {/* Prefer the RUNTIME image reported by `docker compose ps` — the
+          compose file's declared image is often a template
+          (`${REGISTRY}/${IMAGE}:${TAG}`) or a `build:` entry that gets
+          auto-named `<project>-<service>` at runtime. Fall back to the
+          compose-file value only when the service isn't created yet. */}
+      <td
+        className="max-w-[28ch] truncate px-3 py-1.5 font-mono text-muted-foreground"
+        title={status?.image ?? svc.image ?? svc.build ?? ""}
+      >
+        {status?.image || svc.image || svc.build || "—"}
       </td>
       <td className="px-3 py-1.5">
         {!status ? (
@@ -480,7 +506,15 @@ function Row({
       </td>
       <td className="whitespace-nowrap px-3 py-1 text-right">
         <div className="inline-flex items-center justify-end gap-1">
-          {svc.is_oneoff ? (
+          {/* Every service (including one-off) gets the full action
+              row. The "one-off" badge in the Service column is purely
+              informational now — we don't hide anything based on it.
+              Run (`compose run --rm`) shows up for:
+                • one-off services — idiomatic way to fire a task
+                • services that haven't been created yet (no ps row)
+                  — useful to smoke-test a service in an ephemeral
+                  container before committing to `up -d` */}
+          {(svc.is_oneoff || !status) && (
             <Button
               size="sm"
               onClick={onOneOff}
@@ -490,70 +524,67 @@ function Row({
               <Play className="mr-1 h-3 w-3 text-green-400" />
               Run
             </Button>
-          ) : (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onAction("up", svc.name, false)}
-                className="h-6 px-2 text-[11px]"
-                title="Opens a terminal running `docker compose up <svc> -d`"
-              >
-                <ArrowUp className="mr-1 h-3 w-3 text-green-600 dark:text-green-400" />
-                Up
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onAction("restart", svc.name, false)}
-                className="h-6 px-2 text-[11px]"
-                title="Opens a terminal running `docker compose restart <svc>`"
-              >
-                <RefreshCcw className="mr-1 h-3 w-3 text-yellow-600 dark:text-yellow-400" />
-                Restart
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!isRunning}
-                onClick={onStop}
-                className="h-6 px-2 text-[11px]"
-                title="Opens a terminal running `docker compose stop <svc>`"
-              >
-                <StopIcon className="mr-1 h-3 w-3 text-red-600 dark:text-red-400" />
-                Stop
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onAction("build", svc.name, false)}
-                className="h-6 px-2 text-[11px]"
-                title="Opens a terminal running `docker compose build <svc>`"
-              >
-                <Hammer className="mr-1 h-3 w-3 text-orange-600 dark:text-orange-400" />
-                Build
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onOpenLogs}
-                className="h-6 px-2 text-[11px]"
-              >
-                <ScrollText className="mr-1 h-3 w-3 text-blue-600 dark:text-blue-400" />
-                Logs
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!isRunning}
-                onClick={onExecShell}
-                className="h-6 px-2 text-[11px]"
-              >
-                <TerminalSquare className="mr-1 h-3 w-3 text-purple-600 dark:text-purple-400" />
-                Shell
-              </Button>
-            </>
           )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onAction("up", svc.name)}
+            className="h-6 px-2 text-[11px]"
+            title="Opens a terminal running `docker compose up <svc> -d`"
+          >
+            <ArrowUp className="mr-1 h-3 w-3 text-green-600 dark:text-green-400" />
+            Up
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onAction("restart", svc.name)}
+            className="h-6 px-2 text-[11px]"
+            title="Opens a terminal running `docker compose restart <svc>`"
+          >
+            <RefreshCcw className="mr-1 h-3 w-3 text-yellow-600 dark:text-yellow-400" />
+            Restart
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!isRunning}
+            onClick={onStop}
+            className="h-6 px-2 text-[11px]"
+            title="Opens a terminal running `docker compose stop <svc>`"
+          >
+            <StopIcon className="mr-1 h-3 w-3 text-red-600 dark:text-red-400" />
+            Stop
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onAction("build", svc.name)}
+            className="h-6 px-2 text-[11px]"
+            title="Opens a terminal running `docker compose build <svc>`"
+          >
+            <Hammer className="mr-1 h-3 w-3 text-orange-600 dark:text-orange-400" />
+            Build
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onOpenLogs}
+            className="h-6 px-2 text-[11px]"
+          >
+            <ScrollText className="mr-1 h-3 w-3 text-blue-600 dark:text-blue-400" />
+            Logs
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!isRunning}
+            onClick={onExecShell}
+            className="h-6 px-2 text-[11px]"
+          >
+            <TerminalSquare className="mr-1 h-3 w-3 text-purple-600 dark:text-purple-400" />
+            Shell
+          </Button>
         </div>
       </td>
     </tr>

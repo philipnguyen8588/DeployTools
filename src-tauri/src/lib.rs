@@ -36,6 +36,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        // Remembers window size / position / maximize state between
+        // launches. No config needed — sensible defaults cover every
+        // window the app creates.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             let state = AppState::new(app.handle().clone());
             app.manage(state);
@@ -55,10 +59,17 @@ pub fn run() {
             commands::server::delete_server,
             commands::server::test_connection,
             commands::server::test_connection_config,
+            commands::server::reorder_servers,
+            // Server groups (sidebar organisation)
+            commands::groups::list_groups,
+            commands::groups::save_group,
+            commands::groups::delete_group,
+            commands::groups::reorder_groups,
             // Projects (local ↔ remote mapping)
             commands::project::list_projects,
             commands::project::save_project,
             commands::project::delete_project,
+            commands::project::reorder_projects,
             // SSH sessions (multi-tab)
             commands::session::open_session,
             commands::session::close_session,
@@ -114,6 +125,13 @@ pub fn run() {
             // System terminal (local shell or SSH in a native window)
             commands::shell::open_local_terminal,
             commands::shell::open_ssh_terminal,
+            // IDE launcher (VSCode / PyCharm / IntelliJ / Antigravity + custom)
+            commands::ide::list_ides,
+            commands::ide::set_ide_path,
+            commands::ide::clear_ide_path,
+            commands::ide::add_custom_ide,
+            commands::ide::autopopulate_ide_paths,
+            commands::ide::open_ide,
             // Settings (vault location + portable mode)
             commands::settings::get_settings,
             commands::settings::set_vault_dir,

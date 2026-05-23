@@ -13,6 +13,11 @@ import { useSessions, type OpenTab } from "@/stores/sessions";
 
 interface Props {
   tab: OpenTab;
+  /** Whether this ServerTab is the one currently shown in the TabBar.
+   *  Inactive tabs stay mounted for state preservation but MUST NOT
+   *  register any global (window-level) keyboard listeners — otherwise
+   *  a Ctrl+Shift+S keystroke would open N modals on an N-tab session. */
+  isActive?: boolean;
 }
 
 /**
@@ -26,7 +31,7 @@ interface Props {
  * File browsers + terminals are still mounted underneath — but become
  * active again only after the user clicks Reconnect.
  */
-export function ServerTab({ tab }: Props) {
+export function ServerTab({ tab, isActive = true }: Props) {
   const { projects } = useProjects();
   const { updateRemotePath, updateLocalPath, reconnect } = useSessions();
   const [reconnecting, setReconnecting] = useState(false);
@@ -115,6 +120,7 @@ export function ServerTab({ tab }: Props) {
               projectId={project?.id ?? null}
               projectRemoteBase={project?.remote_path ?? null}
               protocol={tab.session.protocol}
+              isActive={isActive}
             />
           </Panel>
         </PanelGroup>

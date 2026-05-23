@@ -17,6 +17,9 @@ tauri-build = { version = "2.0.3", features = [] }
 tauri = { version = "2.1.1", features = [] }
 tauri-plugin-dialog = "2.0.3"
 tauri-plugin-fs = "2.0.3"
+# Persists window position / size / maximize state between launches.
+# Stores state in the app config dir; no frontend code required.
+tauri-plugin-window-state = "2"
 
 # Async runtime.
 #

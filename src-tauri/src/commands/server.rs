@@ -60,6 +60,32 @@ pub async fn delete_server(id: Uuid, state: State<'_, AppState>) -> AppResult<()
         .await
 }
 
+/// Reassign the given servers to `group_id` in the supplied order (0..n
+/// by `ids` index). `group_id = None` moves them into the virtual
+/// "Ungrouped" bucket. Use-case: called once per affected group after a
+/// drag-drop reorder on the frontend.
+///
+/// Ids not found are silently skipped — the frontend may hold a stale
+/// snapshot of the server list.
+#[tauri::command]
+pub async fn reorder_servers(
+    group_id: Option<Uuid>,
+    ids: Vec<Uuid>,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    state
+        .vault
+        .write(|data| {
+            for (i, id) in ids.iter().enumerate() {
+                if let Some(s) = data.servers.iter_mut().find(|s| s.id == *id) {
+                    s.group_id = group_id;
+                    s.order = i as i32;
+                }
+            }
+        })
+        .await
+}
+
 /// Try to connect using the given config WITHOUT saving it to the
 /// vault. Used by the "Test" button in the Add/Edit server dialog so
 /// users can verify credentials before committing them.

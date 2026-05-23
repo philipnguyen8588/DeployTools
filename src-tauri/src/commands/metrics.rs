@@ -28,8 +28,33 @@ pub struct Metrics {
     pub cpu_percent: Option<f32>,
     /// Per-interface network stats.
     pub net: Vec<NetIface>,
+    /// Top running processes — already sorted by CPU desc on the server
+    /// side, but the frontend offers re-sort by column (CPU / RAM / PID).
+    pub processes: Vec<ProcessInfo>,
     /// Raw stdout if nothing parsed (for debugging).
     pub raw: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub user: String,
+    /// Percent of a single CPU (0-100+ for multi-threaded procs).
+    pub cpu_percent: f32,
+    /// Percent of total system RAM.
+    pub mem_percent: f32,
+    /// Resident set size in kilobytes.
+    pub rss_kb: u64,
+    pub command: String,
+    /// Set when the process runs inside a container.
+    /// `"docker" | "podman" | "kubepods" | "containerd" | "lxc"`.
+    pub container_kind: Option<String>,
+    /// Short container id (12 hex chars) for docker/podman/kubepods, or
+    /// an LXC container name. `None` for host processes.
+    pub container_id: Option<String>,
+    /// Friendly name looked up from `docker ps` (e.g. `myapp_web_1`).
+    /// Only populated when the user has docker query access on the host.
+    pub container_name: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -57,6 +82,18 @@ pub async fn fetch_metrics(
 
     // Glue script: we sample /proc/stat twice 1s apart for CPU.
     // Everything is wrapped so we can parse sections.
+    //
+    // The `ps` call uses `--sort=-pcpu` to pre-sort by CPU desc and
+    // `head -50` to cap output.
+    //
+    // Two extra sections tag container processes:
+    //   ---CGROUP---   one line per host PID, `pid<TAB>cgroup-path`.
+    //                  We derive container kind + id from the path.
+    //   ---DOCKER_PS--- `id<TAB>name` mapping for docker containers
+    //                  when the SSH user has docker access; missing if
+    //                  docker is absent or permissions are insufficient.
+    //                  stderr of `docker ps` is silenced so permission
+    //                  errors don't pollute the output stream.
     let script = r#"
 cat /proc/loadavg 2>/dev/null; echo '---UPTIME---'
 cat /proc/uptime 2>/dev/null; echo '---MEMINFO---'
@@ -64,7 +101,10 @@ cat /proc/meminfo 2>/dev/null; echo '---DF---'
 df -P -BK -x tmpfs -x devtmpfs -x squashfs 2>/dev/null | tail -n +2; echo '---CPU1---'
 head -1 /proc/stat 2>/dev/null; sleep 1; echo '---CPU2---'
 head -1 /proc/stat 2>/dev/null; echo '---NET---'
-cat /proc/net/dev 2>/dev/null | tail -n +3
+cat /proc/net/dev 2>/dev/null | tail -n +3; echo '---PS---'
+ps -eo pid=,user=,pcpu=,pmem=,rss=,comm= --sort=-pcpu 2>/dev/null | head -50; echo '---CGROUP---'
+awk 'FNR==1 { n=split(FILENAME,a,"/"); pid=a[n-1]; print pid"\t"$0 }' /proc/[0-9]*/cgroup 2>/dev/null; echo '---DOCKER_PS---'
+docker ps --no-trunc --format '{{.ID}}	{{.Names}}' 2>/dev/null
 "#;
 
     let argv = vec!["sh".to_string(), "-c".into(), script.to_string()];
@@ -82,6 +122,7 @@ fn parse(out: &str) -> Metrics {
         disks: Vec::new(),
         cpu_percent: None,
         net: Vec::new(),
+        processes: Vec::new(),
         raw: None,
     };
 
@@ -99,6 +140,9 @@ fn parse(out: &str) -> Metrics {
                 "CPU1" => "CPU1",
                 "CPU2" => "CPU2",
                 "NET" => "NET",
+                "PS" => "PS",
+                "CGROUP" => "CGROUP",
+                "DOCKER_PS" => "DOCKER_PS",
                 _ => current,
             };
             sections.entry(current).or_default();
@@ -207,6 +251,103 @@ fn parse(out: &str) -> Metrics {
         }
     }
 
+    // Build a pid → cgroup-path map first so we can enrich ProcessInfo
+    // entries in a single pass below.
+    let mut cgroup_by_pid: std::collections::HashMap<u32, String> =
+        std::collections::HashMap::new();
+    if let Some(lines) = sections.get("CGROUP") {
+        for line in lines {
+            // Format: `<pid>\t<cgroup-line>`. cgroup line is one of:
+            //   v2: `0::/system.slice/docker-abcdef.scope`
+            //   v1: `12:cpu:/docker/abcdef...`
+            let mut it = line.splitn(2, '\t');
+            let pid: Option<u32> = it.next().and_then(|s| s.trim().parse().ok());
+            let rest = it.next().unwrap_or("");
+            if let Some(pid) = pid {
+                cgroup_by_pid.insert(pid, rest.to_string());
+            }
+        }
+    }
+
+    // Docker container id → friendly name map (may be empty).
+    let mut docker_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    if let Some(lines) = sections.get("DOCKER_PS") {
+        for line in lines {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            // `docker ps` might emit with a tab OR whitespace depending on
+            // shell quoting. Accept either.
+            let (id_full, name) = match line.split_once('\t') {
+                Some(p) => p,
+                None => match line.split_once(char::is_whitespace) {
+                    Some(p) => p,
+                    None => continue,
+                },
+            };
+            let id_full = id_full.trim();
+            let name = name.trim();
+            if id_full.is_empty() || name.is_empty() {
+                continue;
+            }
+            // Index by the full id AND the short (first 12 chars) form
+            // so lookup works no matter which id the cgroup path carries.
+            let short: String = id_full.chars().take(12).collect();
+            docker_names.insert(short, name.to_string());
+            docker_names.insert(id_full.to_string(), name.to_string());
+        }
+    }
+
+    // processes — output format:
+    //   pid user pcpu pmem rss comm
+    // where `comm` can contain spaces if the process renamed itself;
+    // we consume the first 5 whitespace-separated tokens and take the
+    // rest as the command.
+    if let Some(lines) = sections.get("PS") {
+        for line in lines {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let mut it = trimmed.split_whitespace();
+            let pid = it.next().and_then(|s| s.parse::<u32>().ok());
+            let user = it.next();
+            let pcpu = it.next().and_then(|s| s.parse::<f32>().ok());
+            let pmem = it.next().and_then(|s| s.parse::<f32>().ok());
+            let rss = it.next().and_then(|s| s.parse::<u64>().ok());
+            let cmd: String = it.collect::<Vec<_>>().join(" ");
+            if let (Some(pid), Some(user), Some(pcpu), Some(pmem), Some(rss)) =
+                (pid, user, pcpu, pmem, rss)
+            {
+                if cmd.is_empty() {
+                    continue;
+                }
+                // Container detection from cgroup, if we have the path.
+                let (container_kind, container_id) = cgroup_by_pid
+                    .get(&pid)
+                    .and_then(|p| detect_container(p))
+                    .unwrap_or((None, None));
+                let container_name = container_id
+                    .as_deref()
+                    .and_then(|id| docker_names.get(id).cloned());
+
+                m.processes.push(ProcessInfo {
+                    pid,
+                    user: user.to_string(),
+                    cpu_percent: pcpu,
+                    mem_percent: pmem,
+                    rss_kb: rss,
+                    command: cmd,
+                    container_kind,
+                    container_id,
+                    container_name,
+                });
+            }
+        }
+    }
+
     if m.loadavg.is_none() && m.mem_total_kb.is_none() && m.disks.is_empty() {
         // Probably a non-Linux box (BusyBox ash with missing /proc? MacOS?).
         m.raw = Some(out.chars().take(2000).collect());
@@ -244,4 +385,88 @@ fn parse_kb(s: &str) -> Option<u64> {
         .split_whitespace()
         .next()
         .and_then(|n| n.parse::<u64>().ok())
+}
+
+/// Inspect a `/proc/<pid>/cgroup` line and report which container runtime
+/// (if any) the process belongs to, plus its short id/name.
+///
+/// Recognised patterns, covering cgroup v1 (`HIERARCHY:CTRL:/path`) and
+/// cgroup v2 (`0::/path`) across the common runtimes:
+///
+/// * Docker:     `/docker/<64hex>` or `/docker-<64hex>.scope`
+/// * Podman:     `/libpod-<64hex>.scope` or `/machine.slice/libpod-…`
+/// * Kubernetes: `/kubepods/.../pod<uuid>/<64hex>` or
+///               `cri-containerd-<64hex>.scope` inside kubepods
+/// * containerd: `/.../<64hex>` under `/system.slice/containerd.service`
+/// * LXC:        `/lxc/<name>` (name may be non-hex)
+///
+/// Anything that doesn't match (or an empty path) returns `(None, None)`
+/// so the caller can treat it as a host-level process.
+fn detect_container(cgroup_path: &str) -> Option<(Option<String>, Option<String>)> {
+    let path = cgroup_path.trim();
+
+    // Kubernetes first — its cgroups nest `docker-<HASH>.scope` or
+    // `cri-containerd-<HASH>.scope` inside `kubepods`, so checking
+    // docker first would mislabel k8s pods as plain docker.
+    if path.contains("/kubepods") {
+        for seg in path.rsplit('/') {
+            let seg = seg.trim_end_matches(".scope");
+            let tail = seg.rsplit('-').next().unwrap_or(seg);
+            if let Some(id) = take_hex(tail) {
+                return Some((Some("kubepods".into()), Some(id)));
+            }
+        }
+    }
+    // Docker (cgroupfs driver): `/docker/<HASH>`
+    if let Some(idx) = path.find("/docker/") {
+        if let Some(id) = take_hex(&path[idx + "/docker/".len()..]) {
+            return Some((Some("docker".into()), Some(id)));
+        }
+    }
+    // Docker (systemd driver): `docker-<HASH>.scope`
+    if let Some(idx) = path.find("docker-") {
+        if let Some(id) = take_hex(&path[idx + "docker-".len()..]) {
+            return Some((Some("docker".into()), Some(id)));
+        }
+    }
+    // Podman: `libpod-<HASH>.scope`
+    if let Some(idx) = path.find("libpod-") {
+        if let Some(id) = take_hex(&path[idx + "libpod-".len()..]) {
+            return Some((Some("podman".into()), Some(id)));
+        }
+    }
+    // Plain containerd under its own slice/scope (nerdctl, non-k8s).
+    if path.contains("containerd") {
+        for seg in path.rsplit('/') {
+            let seg = seg.trim_end_matches(".scope");
+            let tail = seg.rsplit('-').next().unwrap_or(seg);
+            if let Some(id) = take_hex(tail) {
+                return Some((Some("containerd".into()), Some(id)));
+            }
+        }
+    }
+    // LXC — container name isn't a hex id; keep verbatim.
+    if let Some(idx) = path.find("/lxc/") {
+        let rest = &path[idx + "/lxc/".len()..];
+        let name: String = rest.chars().take_while(|c| *c != '/' && *c != '.').collect();
+        if !name.is_empty() {
+            return Some((Some("lxc".into()), Some(name)));
+        }
+    }
+    None
+}
+
+/// Consume up to 12 hex characters from the start of `s`. Returns `None`
+/// if fewer than 12 hex chars are available (not a container id).
+fn take_hex(s: &str) -> Option<String> {
+    let out: String = s
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .take(12)
+        .collect();
+    if out.len() == 12 {
+        Some(out)
+    } else {
+        None
+    }
 }

@@ -1,5 +1,12 @@
-import { useState } from "react";
-import { Zap, Trash2, FolderOpen, Network } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  Zap,
+  Trash2,
+  FolderOpen,
+  Network,
+  Code2,
+  ChevronDown,
+} from "lucide-react";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 
@@ -7,7 +14,9 @@ import * as api from "@/lib/api";
 import { useProjects } from "@/stores/projects";
 import { useSessions } from "@/stores/sessions";
 import { Button } from "./ui/button";
+import { ContextMenu, type ContextMenuItem } from "./ui/context-menu";
 import { useConfirm } from "./ConfirmDialog";
+import { IdeIcon } from "./IdeIcon";
 
 interface Props {
   projectId: string | null;
@@ -49,6 +58,50 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
       toast.error(`${e}`);
     }
   }
+
+  // IDE launcher — load the list once + refresh when the menu opens so
+  // changes in Settings are reflected without an app restart.
+  const [ides, setIdes] = useState<api.IdeEntry[]>([]);
+  const [ideMenu, setIdeMenu] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  useEffect(() => {
+    api.listIdes().then(setIdes).catch(() => {});
+  }, []);
+
+  async function openIde(key: string, label: string) {
+    if (!project?.local_path) {
+      toast.error("No project local path");
+      return;
+    }
+    try {
+      await api.openIde(key, project.local_path);
+    } catch (e) {
+      toast.error(`${label}: ${e}`);
+    }
+  }
+
+  async function openIdeMenu(anchor: HTMLElement) {
+    // Refresh the list so Settings changes apply immediately.
+    try {
+      const fresh = await api.listIdes();
+      setIdes(fresh);
+    } catch {
+      /* keep whatever we had */
+    }
+    const r = anchor.getBoundingClientRect();
+    setIdeMenu({ x: r.left, y: r.bottom + 2 });
+  }
+
+  const ideMenuItems: ContextMenuItem[] = ides.map((ide) => {
+    const available = !!(ide.configured || ide.detected);
+    return {
+      label: ide.label + (available ? "" : " (not installed)"),
+      icon: <IdeIcon ideKey={ide.key} />,
+      disabled: !available,
+      onClick: () => void openIde(ide.key, ide.label),
+    };
+  });
 
   async function syncSftp(deleteExtraneous: boolean) {
     if (!projectId || running) return;
@@ -130,6 +183,17 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
         <Network className="mr-1 h-3 w-3" />
         SSH
       </Button>
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={!project?.local_path}
+        onClick={(e) => void openIdeMenu(e.currentTarget)}
+        title="Open the project's local folder in an IDE"
+      >
+        <Code2 className="mr-1 h-3 w-3" />
+        IDE
+        <ChevronDown className="ml-0.5 h-3 w-3 opacity-70" />
+      </Button>
 
       <div className="mx-1 h-4 w-px bg-border" />
 
@@ -152,6 +216,15 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
         <Trash2 className="mr-1 h-3 w-3" />
         Sync + delete
       </Button>
+
+      {ideMenu && (
+        <ContextMenu
+          x={ideMenu.x}
+          y={ideMenu.y}
+          items={ideMenuItems}
+          onClose={() => setIdeMenu(null)}
+        />
+      )}
     </motion.div>
   );
 }

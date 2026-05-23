@@ -137,6 +137,10 @@ export default function App() {
     if (unlocked) {
       void refreshServers();
       void refreshProjects();
+      // Fire-and-forget: on first unlock after install, auto-pin any
+      // detected IDE paths so the deploy-bar IDE menu works without
+      // the user visiting Settings.
+      api.autopopulateIdePaths().catch(() => {});
     }
   }, [unlocked, refreshServers, refreshProjects]);
 
@@ -264,7 +268,10 @@ export default function App() {
                         t.session.id === activeId ? "block" : "hidden",
                       )}
                     >
-                      <ServerTab tab={t} />
+                      <ServerTab
+                        tab={t}
+                        isActive={t.session.id === activeId}
+                      />
                     </div>
                   ))
                 )}

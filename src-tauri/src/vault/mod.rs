@@ -344,7 +344,10 @@ mod tests {
                     auth: AuthMethod::Password {
                         password: Secret("s3cret".into()),
                     },
+                    protocol: Default::default(),
                     host_key_fingerprint: None,
+                    group_id: None,
+                    order: 0,
                 });
             })
             .await

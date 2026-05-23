@@ -5,6 +5,10 @@ import {
   RotateCcw,
   AlertTriangle,
   Timer,
+  Code2,
+  CheckCircle2,
+  XCircle,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -21,6 +25,7 @@ import {
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { IdeIcon } from "./IdeIcon";
 
 interface Props {
   onClose: () => void;
@@ -35,6 +40,7 @@ export function SettingsDialog({ onClose }: Props) {
   const [s, setS] = useState<api.AppSettings | null>(null);
   const [busy, setBusy] = useState(false);
   const [idleDraft, setIdleDraft] = useState<string>("");
+  const [ides, setIdes] = useState<api.IdeEntry[]>([]);
 
   async function reload() {
     try {
@@ -46,9 +52,81 @@ export function SettingsDialog({ onClose }: Props) {
     }
   }
 
+  async function reloadIdes() {
+    try {
+      setIdes(await api.listIdes());
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
   useEffect(() => {
     void reload();
+    void reloadIdes();
   }, []);
+
+  async function pickIdeExe(key: string) {
+    const picked = await openDialog({
+      multiple: false,
+      title: "Pick the IDE executable",
+      filters: [{ name: "Executable", extensions: ["exe"] }],
+    });
+    if (!picked || typeof picked !== "string") return;
+    try {
+      await api.setIdePath(key, picked);
+      await reloadIdes();
+      toast.success("Path saved");
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
+  async function clearIde(key: string) {
+    try {
+      await api.clearIdePath(key);
+      await reloadIdes();
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
+  async function autoFillIdes() {
+    try {
+      const filled = await api.autopopulateIdePaths();
+      await reloadIdes();
+      if (filled.length === 0) toast.info("No new IDEs detected.");
+      else toast.success(`Auto-filled: ${filled.join(", ")}`);
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
+  // --- Custom IDE form state ---
+  const [newIdeLabel, setNewIdeLabel] = useState("");
+  const [newIdePath, setNewIdePath] = useState("");
+  async function pickNewIdeExe() {
+    const picked = await openDialog({
+      multiple: false,
+      title: "Pick the IDE executable",
+      filters: [{ name: "Executable", extensions: ["exe"] }],
+    });
+    if (picked && typeof picked === "string") setNewIdePath(picked);
+  }
+  async function addCustomIde() {
+    if (!newIdeLabel.trim() || !newIdePath.trim()) {
+      toast.error("Label and path are required.");
+      return;
+    }
+    try {
+      await api.addCustomIde(newIdeLabel.trim(), newIdePath.trim());
+      setNewIdeLabel("");
+      setNewIdePath("");
+      await reloadIdes();
+      toast.success("IDE added");
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
 
   async function saveIdleTimeout() {
     const n = Number.parseInt(idleDraft, 10);
@@ -126,7 +204,7 @@ export function SettingsDialog({ onClose }: Props) {
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <SettingsIcon className="h-5 w-5 text-primary" />
@@ -142,7 +220,7 @@ export function SettingsDialog({ onClose }: Props) {
         {!s ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
-          <div className="space-y-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             {/* Current vault location */}
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-sm font-medium">
@@ -251,6 +329,120 @@ export function SettingsDialog({ onClose }: Props) {
                     DISABLED
                   </span>
                 )}
+              </div>
+            </div>
+
+            {/* IDEs — used by the "IDE" button on a server tab. */}
+            <div className="space-y-1.5 border-t pt-3">
+              <div className="flex items-center gap-2">
+                <div className="flex flex-1 items-center gap-2 text-sm font-medium">
+                  <Code2 className="h-4 w-4 text-primary" />
+                  IDEs
+                </div>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => void autoFillIdes()}
+                  title="Scan known install locations and pin the ones we find"
+                >
+                  <Sparkles className="mr-1 h-3 w-3" />
+                  Auto-detect
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Path to each IDE's exe — used by the <strong>IDE</strong>{" "}
+                button in the deploy bar. Auto-detect scans common install
+                locations; browse manually if yours isn't found.
+              </p>
+              <ul className="divide-y rounded-md border">
+                {ides.map((ide) => {
+                  const active = ide.configured ?? ide.detected;
+                  return (
+                    <li
+                      key={ide.key}
+                      className="flex items-center gap-2 px-3 py-2"
+                    >
+                      <IdeIcon ideKey={ide.key} className="h-5 w-5 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 text-sm font-semibold">
+                          {active ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                          ) : (
+                            <XCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                          )}
+                          {ide.label}
+                          {!ide.is_builtin && (
+                            <span className="rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-mono text-blue-600 dark:text-blue-400">
+                              custom
+                            </span>
+                          )}
+                          {ide.is_builtin && !ide.configured && ide.detected && (
+                            <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
+                              auto-detected
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                          {active ?? "not installed / not set"}
+                        </div>
+                      </div>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => void pickIdeExe(ide.key)}
+                      >
+                        Browse…
+                      </Button>
+                      {(ide.configured || !ide.is_builtin) && (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={() => void clearIde(ide.key)}
+                          title={
+                            ide.is_builtin
+                              ? "Remove the user override (falls back to auto-detected if any)"
+                              : "Remove this custom IDE entirely"
+                          }
+                        >
+                          {ide.is_builtin ? "Reset" : "Remove"}
+                        </Button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+
+              {/* Add custom IDE form */}
+              <div className="mt-1 space-y-2 rounded-md border border-dashed p-3">
+                <div className="text-xs font-medium">Add custom IDE</div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="Label (e.g. Zed, Sublime)"
+                    value={newIdeLabel}
+                    onChange={(e) => setNewIdeLabel(e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                  <Input
+                    placeholder="Path to .exe"
+                    value={newIdePath}
+                    onChange={(e) => setNewIdePath(e.target.value)}
+                    className="h-8 flex-1 font-mono text-xs"
+                  />
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => void pickNewIdeExe()}
+                  >
+                    Browse…
+                  </Button>
+                  <Button
+                    size="xs"
+                    onClick={() => void addCustomIde()}
+                    disabled={!newIdeLabel.trim() || !newIdePath.trim()}
+                  >
+                    Add
+                  </Button>
+                </div>
               </div>
             </div>
 

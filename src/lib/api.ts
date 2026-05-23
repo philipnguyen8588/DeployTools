@@ -23,6 +23,7 @@ import type {
   ServiceStatus,
   SessionCapabilities,
   Server,
+  ServerGroup,
   ServerSummary,
   SessionSummary,
   Snippet,
@@ -52,6 +53,18 @@ export const testConnection = (id: UUID) =>
   invoke<string>("test_connection", { id });
 export const testConnectionConfig = (server: Server) =>
   invoke<string>("test_connection_config", { server });
+/** Drag-drop reorder. Called once per affected group after a drop. */
+export const reorderServers = (groupId: UUID | null, ids: UUID[]) =>
+  invoke<void>("reorder_servers", { groupId, ids });
+
+// --- Server groups ---
+
+export const listGroups = () => invoke<ServerGroup[]>("list_groups");
+export const saveGroup = (group: ServerGroup) =>
+  invoke<ServerGroup>("save_group", { group });
+export const deleteGroup = (id: UUID) => invoke<void>("delete_group", { id });
+export const reorderGroups = (ids: UUID[]) =>
+  invoke<void>("reorder_groups", { ids });
 
 // --- Projects ---
 
@@ -60,6 +73,8 @@ export const saveProject = (project: Project) =>
   invoke<Project>("save_project", { project });
 export const deleteProject = (id: UUID) =>
   invoke<void>("delete_project", { id });
+export const reorderProjects = (serverId: UUID, ids: UUID[]) =>
+  invoke<void>("reorder_projects", { serverId, ids });
 
 // --- Sessions ---
 
@@ -285,6 +300,32 @@ export const openLocalTerminal = (cwd?: string) =>
   invoke<void>("open_local_terminal", { cwd });
 export const openSshTerminal = (serverId: UUID, remotePath?: string) =>
   invoke<void>("open_ssh_terminal", { serverId, remotePath });
+
+// --- IDE launcher (VSCode / PyCharm / IntelliJ / Antigravity) ---
+export interface IdeEntry {
+  key: string;
+  label: string;
+  /** User-configured absolute path, or `null` if not pinned. */
+  configured: string | null;
+  /** Auto-detected path from the filesystem scan. */
+  detected: string | null;
+  /** True for the hardcoded built-in set (VSCode / PyCharm / …).
+   *  Custom entries can be fully removed from the Settings dialog;
+   *  built-ins only support Reset (which drops the user override and
+   *  falls back to the auto-detected path). */
+  is_builtin: boolean;
+}
+export const listIdes = () => invoke<IdeEntry[]>("list_ides");
+export const setIdePath = (key: string, path: string) =>
+  invoke<void>("set_ide_path", { key, path });
+export const clearIdePath = (key: string) =>
+  invoke<void>("clear_ide_path", { key });
+export const addCustomIde = (label: string, path: string) =>
+  invoke<string>("add_custom_ide", { label, path });
+export const autopopulateIdePaths = () =>
+  invoke<string[]>("autopopulate_ide_paths");
+export const openIde = (key: string, projectPath: string) =>
+  invoke<void>("open_ide", { key, projectPath });
 
 // --- Settings ---
 export interface AppSettings {

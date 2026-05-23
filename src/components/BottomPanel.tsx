@@ -61,6 +61,11 @@ interface Props {
   projectRemoteBase?: string | null;
   /** Wire protocol — gates SSH-only tabs (Terminal, Git, Docker, …). */
   protocol?: "ssh" | "ftp" | "ftps";
+  /** Whether this BottomPanel is inside the currently visible ServerTab.
+   *  Global keyboard shortcuts (Ctrl+Shift+S / Ctrl+Shift+H) are only
+   *  registered by the active panel — otherwise N open sessions = N
+   *  listeners = N modal opens per keystroke. */
+  isActive?: boolean;
 }
 
 type TabKind =
@@ -93,6 +98,7 @@ export function BottomPanel({
   projectId,
   projectRemoteBase,
   protocol = "ssh",
+  isActive = true,
 }: Props) {
   const isSsh = protocol === "ssh";
   const [terminalTabs, setTerminalTabs] = useState<
@@ -185,9 +191,15 @@ export function BottomPanel({
   // Global keyboard shortcuts while a terminal tab is active.
   //   Ctrl+Shift+S  → open Snippets picker
   //   Ctrl+Shift+H  → open History picker
+  //
+  // IMPORTANT: gated on `isActive` — multiple server tabs stay mounted,
+  // so without this gate every open session registers its own listener
+  // and you'd see the modal N times per keystroke.
+  //
   // We run in the capture phase + stop propagation so xterm doesn't
   // see the keys as typed input.
   useEffect(() => {
+    if (!isActive) return;
     if (!activeIsTerminal) return;
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey && e.shiftKey)) return;
@@ -205,7 +217,7 @@ export function BottomPanel({
     window.addEventListener("keydown", onKey, { capture: true });
     return () =>
       window.removeEventListener("keydown", onKey, { capture: true });
-  }, [activeIsTerminal, activeTerminalId]);
+  }, [isActive, activeIsTerminal, activeTerminalId]);
 
   async function insertSnippetIntoActiveTerminal(cmd: string) {
     if (!activeTerminalId) return;
@@ -281,6 +293,10 @@ export function BottomPanel({
 
   // SSH sessions get the full tab suite; FTP/FTPS only get Activity
   // (no terminal, no Docker, no metrics — these all need a shell).
+  //
+  // Ordering by frequency of use: Terminal → Git → Docker → Resources →
+  // Activity → Services. "Services" (systemd unit list) sits last as
+  // it's rarely touched during day-to-day deploys.
   const ordered: BottomTab[] = isSsh
     ? [
         ...terminalTabs.map((t) => ({
@@ -294,9 +310,9 @@ export function BottomPanel({
               { kind: "docker" as const, id: "docker", label: "Docker" },
             ]
           : []),
-        { kind: "services" as const, id: "services", label: "Services" },
         { kind: "resources" as const, id: "resources", label: "Resources" },
         { kind: "activity" as const, id: "activity", label: "Activity" },
+        { kind: "services" as const, id: "services", label: "Services" },
       ]
     : [{ kind: "activity" as const, id: "activity", label: "Activity" }];
 

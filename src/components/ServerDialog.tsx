@@ -3,7 +3,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Plug } from "lucide-react";
 import { toast } from "sonner";
 
-import type { AuthMethod, Server } from "@/lib/types";
+import type { AuthMethod, Server, UUID } from "@/lib/types";
 import * as api from "@/lib/api";
 import {
   Dialog,
@@ -23,6 +23,9 @@ interface Props {
    *  by the "Copy" action — pass a clone of an existing server with
    *  `id` reset to nil so Save creates a new record. */
   initialServer?: Server | null;
+  /** Drop the newly-created server into this group on Save. Ignored
+   *  when editing / copying an existing server. */
+  initialGroupId?: UUID | null;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -36,6 +39,8 @@ const emptyServer: Server = {
   auth: { kind: "password", password: "" },
   protocol: "ssh",
   host_key_fingerprint: null,
+  group_id: null,
+  order: 0,
 };
 
 const DEFAULT_PORT: Record<"ssh" | "ftp" | "ftps", number> = {
@@ -47,10 +52,16 @@ const DEFAULT_PORT: Record<"ssh" | "ftp" | "ftps", number> = {
 export function ServerDialog({
   serverId,
   initialServer,
+  initialGroupId,
   onClose,
   onSaved,
 }: Props) {
-  const [server, setServer] = useState<Server>(initialServer ?? emptyServer);
+  const [server, setServer] = useState<Server>(
+    initialServer ??
+      (initialGroupId !== undefined
+        ? { ...emptyServer, group_id: initialGroupId ?? null }
+        : emptyServer),
+  );
   const [authKind, setAuthKind] = useState<"password" | "private_key">(
     initialServer?.auth.kind ?? "password",
   );

@@ -21,6 +21,10 @@ export interface Server {
   auth: AuthMethod;
   protocol: Protocol;
   host_key_fingerprint?: string | null;
+  /** Group membership — `null` for the virtual "Ungrouped" bucket. */
+  group_id?: UUID | null;
+  /** Position within its group (ascending). */
+  order?: number;
 }
 
 export interface ServerSummary {
@@ -32,6 +36,16 @@ export interface ServerSummary {
   auth_kind: "password" | "key";
   protocol: Protocol;
   has_fingerprint: boolean;
+  /** `null` = sidebar's virtual "Ungrouped" bucket. */
+  group_id: UUID | null;
+  order: number;
+}
+
+/** Named sidebar bucket that clusters servers. */
+export interface ServerGroup {
+  id: UUID;
+  name: string;
+  order: number;
 }
 
 export interface Project {
@@ -42,6 +56,8 @@ export interface Project {
   remote_path: string;
   excludes: string[];
   rsync_flags: string;
+  /** Position within the parent server (ascending). */
+  order?: number;
 }
 
 export interface VaultStatus {
@@ -274,6 +290,21 @@ export interface NetIface {
   tx_bytes: number;
 }
 
+export interface ProcessInfo {
+  pid: number;
+  user: string;
+  cpu_percent: number;
+  mem_percent: number;
+  rss_kb: number;
+  command: string;
+  /** Set when this process runs inside a container. */
+  container_kind: "docker" | "podman" | "kubepods" | "containerd" | "lxc" | null;
+  /** Short container id (12 hex) or LXC container name. */
+  container_id: string | null;
+  /** Friendly name from `docker ps` when the SSH user has docker access. */
+  container_name: string | null;
+}
+
 export interface Metrics {
   loadavg: [number, number, number] | null;
   uptime_secs: number | null;
@@ -282,6 +313,7 @@ export interface Metrics {
   disks: DiskUsage[];
   cpu_percent: number | null;
   net: NetIface[];
+  processes: ProcessInfo[];
   raw: string | null;
 }
 
