@@ -1,0 +1,52 @@
+name: CI
+
+# Verify the app compiles on Windows + macOS for every push / PR.
+# Does NOT create a release — that's handled by release.yml on tags.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same branch/PR.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: ${{ matrix.platform }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend (type-check + vite)
+        run: npm run build
+
+      - name: Build Tauri app
+        run: npm run tauri build -- --no-bundle

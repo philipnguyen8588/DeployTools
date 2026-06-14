@@ -1,0 +1,72 @@
+name: Release
+
+# Build desktop bundles for Windows + macOS and publish a GitHub Release.
+#
+# Triggers:
+#   - push a tag like `v0.1.0`  -> builds + creates/updates the matching release
+#   - manual run (workflow_dispatch) -> builds a draft release for testing
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Allow the action to create releases / upload assets.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS universal binary (Apple Silicon + Intel in one .dmg)
+          - platform: macos-latest
+            target: universal-apple-darwin
+            args: "--target universal-apple-darwin"
+          # Windows x64 (.msi + NSIS .exe)
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS universal build needs both arch targets installed.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build app + publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # `__VERSION__` is replaced with the version from tauri.conf.json.
+          tagName: ${{ github.ref_name }}
+          releaseName: "Auto Deployment __VERSION__"
+          releaseBody: "See the assets below to download and install this version."
+          # On manual runs we have no tag, so publish as a draft instead.
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' }}
+          prerelease: false
+          args: ${{ matrix.args }}
