@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Minus, Square, X, Copy, Rocket } from "lucide-react";
+import { Minus, Plus, Square, X, Copy, Rocket } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { ThemeToggle } from "./ThemeToggle";
@@ -7,11 +7,11 @@ import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
 
 /**
- * True when running on macOS. There the window uses native chrome
- * (`titleBarStyle: Overlay` + native traffic lights, configured in
- * `tauri.macos.conf.json`), so we hide our custom Min/Max/Close buttons
- * and leave room on the left for the traffic lights. Detected from the
- * WebView user agent — no extra Tauri plugin required.
+ * True when running on macOS. We keep our own (non-native) window
+ * controls on every platform, but on macOS we render them as the
+ * familiar traffic-light dots on the LEFT, while Windows/Linux keep the
+ * icon buttons on the right. Detected from the WebView user agent — no
+ * extra Tauri plugin required.
  */
 const IS_MAC =
   typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
@@ -54,12 +54,11 @@ export function TitleBar({ rightSlot }: Props) {
   return (
     <header
       data-tauri-drag-region
-      className={cn(
-        "flex h-10 shrink-0 select-none items-center gap-2 border-b bg-card",
-        // Leave room for the native macOS traffic lights on the left.
-        IS_MAC ? "pl-[78px]" : "pl-3",
-      )}
+      className="flex h-10 shrink-0 select-none items-center gap-2 border-b bg-card pl-3 pr-1"
     >
+      {/* macOS: traffic-light controls on the left. */}
+      {IS_MAC && <MacControls maximized={maximized} win={win} />}
+
       <Rocket
         data-tauri-drag-region
         className="h-4 w-4 shrink-0 text-primary"
@@ -79,8 +78,7 @@ export function TitleBar({ rightSlot }: Props) {
         {rightSlot}
       </div>
 
-      {/* Window controls — Windows-style: Min | Max | Close.
-          Hidden on macOS, which uses the native traffic-light buttons. */}
+      {/* Windows/Linux: icon controls on the right — Min | Max | Close. */}
       {!IS_MAC && (
         <div className="ml-1 flex h-full items-stretch">
           <WindowButton
@@ -109,6 +107,70 @@ export function TitleBar({ rightSlot }: Props) {
         </div>
       )}
     </header>
+  );
+}
+
+/**
+ * macOS-style traffic-light window controls: three colored dots on the
+ * left in the order close / minimize / zoom. The glyph inside each dot
+ * is revealed on hover (group-hover), matching native macOS behavior.
+ */
+function MacControls({
+  maximized,
+  win,
+}: {
+  maximized: boolean;
+  win: ReturnType<typeof getCurrentWindow>;
+}) {
+  return (
+    <div
+      data-tauri-drag-region="false"
+      className="group flex items-center gap-2 pr-1.5"
+    >
+      <MacDot
+        aria-label="Close"
+        className="bg-[#ff5f57]"
+        onClick={() => void win.close()}
+      >
+        <X className="h-2 w-2" strokeWidth={3} />
+      </MacDot>
+      <MacDot
+        aria-label="Minimize"
+        className="bg-[#febc2e]"
+        onClick={() => void win.minimize()}
+      >
+        <Minus className="h-2 w-2" strokeWidth={3} />
+      </MacDot>
+      <MacDot
+        aria-label={maximized ? "Restore" : "Zoom"}
+        className="bg-[#28c840]"
+        onClick={() => void win.toggleMaximize()}
+      >
+        <Plus className="h-2 w-2" strokeWidth={3} />
+      </MacDot>
+    </div>
+  );
+}
+
+function MacDot({
+  children,
+  className,
+  ...rest
+}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      {...rest}
+      data-tauri-drag-region="false"
+      className={cn(
+        "flex h-3 w-3 items-center justify-center rounded-full text-black/55 ring-1 ring-inset ring-black/10",
+        className,
+      )}
+    >
+      {/* Glyph only visible on hover of the whole cluster. */}
+      <span className="opacity-0 transition-opacity group-hover:opacity-100">
+        {children}
+      </span>
+    </button>
   );
 }
 

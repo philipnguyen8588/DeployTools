@@ -43,21 +43,6 @@ pub fn run() {
         .setup(|app| {
             let state = AppState::new(app.handle().clone());
             app.manage(state);
-
-            // On macOS, force the native window chrome on the main window:
-            // rounded corners + the traffic-light (close/min/zoom) buttons.
-            // `tauri.macos.conf.json` sets this at window-creation time, but
-            // re-applying it here on the live window guarantees the buttons
-            // appear even if the platform config merge didn't take effect.
-            #[cfg(target_os = "macos")]
-            {
-                use tauri::TitleBarStyle;
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.set_decorations(true);
-                    let _ = window.set_title_bar_style(TitleBarStyle::Overlay);
-                }
-            }
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
