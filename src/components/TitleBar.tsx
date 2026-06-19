@@ -6,6 +6,16 @@ import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
 
+/**
+ * True when running on macOS. There the window uses native chrome
+ * (`titleBarStyle: Overlay` + native traffic lights, configured in
+ * `tauri.macos.conf.json`), so we hide our custom Min/Max/Close buttons
+ * and leave room on the left for the traffic lights. Detected from the
+ * WebView user agent — no extra Tauri plugin required.
+ */
+const IS_MAC =
+  typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
+
 interface Props {
   /**
    * Optional right-side slot for per-page controls (e.g. the Lock button
@@ -44,7 +54,11 @@ export function TitleBar({ rightSlot }: Props) {
   return (
     <header
       data-tauri-drag-region
-      className="flex h-10 shrink-0 select-none items-center gap-2 border-b bg-card pl-3"
+      className={cn(
+        "flex h-10 shrink-0 select-none items-center gap-2 border-b bg-card",
+        // Leave room for the native macOS traffic lights on the left.
+        IS_MAC ? "pl-[78px]" : "pl-3",
+      )}
     >
       <Rocket
         data-tauri-drag-region
@@ -65,32 +79,35 @@ export function TitleBar({ rightSlot }: Props) {
         {rightSlot}
       </div>
 
-      {/* Window controls — Windows-style: Min | Max | Close */}
-      <div className="ml-1 flex h-full items-stretch">
-        <WindowButton
-          aria-label="Minimize"
-          onClick={() => void win.minimize()}
-        >
-          <Minus className="h-3.5 w-3.5" />
-        </WindowButton>
-        <WindowButton
-          aria-label={maximized ? "Restore" : "Maximize"}
-          onClick={() => void win.toggleMaximize()}
-        >
-          {maximized ? (
-            <Copy className="h-3 w-3" />
-          ) : (
-            <Square className="h-3 w-3" />
-          )}
-        </WindowButton>
-        <WindowButton
-          aria-label="Close"
-          danger
-          onClick={() => void win.close()}
-        >
-          <X className="h-3.5 w-3.5" />
-        </WindowButton>
-      </div>
+      {/* Window controls — Windows-style: Min | Max | Close.
+          Hidden on macOS, which uses the native traffic-light buttons. */}
+      {!IS_MAC && (
+        <div className="ml-1 flex h-full items-stretch">
+          <WindowButton
+            aria-label="Minimize"
+            onClick={() => void win.minimize()}
+          >
+            <Minus className="h-3.5 w-3.5" />
+          </WindowButton>
+          <WindowButton
+            aria-label={maximized ? "Restore" : "Maximize"}
+            onClick={() => void win.toggleMaximize()}
+          >
+            {maximized ? (
+              <Copy className="h-3 w-3" />
+            ) : (
+              <Square className="h-3 w-3" />
+            )}
+          </WindowButton>
+          <WindowButton
+            aria-label="Close"
+            danger
+            onClick={() => void win.close()}
+          >
+            <X className="h-3.5 w-3.5" />
+          </WindowButton>
+        </div>
+      )}
     </header>
   );
 }

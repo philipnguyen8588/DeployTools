@@ -141,6 +141,12 @@ export function Terminal({
   useEffect(() => {
     if (!isActive) return;
     const handler = (e: KeyboardEvent) => {
+      // Never steal focus while an IME composition is in progress
+      // (Vietnamese Telex, Chinese/Japanese/Korean, etc.). Re-focusing the
+      // xterm textarea mid-composition aborts the composition, so the
+      // composed character is lost and nothing reaches the shell. macOS
+      // fires these keydowns with keyCode 229 / isComposing=true.
+      if (e.isComposing || e.keyCode === 229) return;
       const t = e.target as HTMLElement | null;
       if (
         t &&
@@ -222,6 +228,8 @@ export function Terminal({
     // the key combo as literal input.
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
+      // Let xterm's composition helper handle IME input untouched.
+      if (e.isComposing || e.keyCode === 229) return true;
       if (!e.ctrlKey || !e.shiftKey) return true;
       const k = e.key.toLowerCase();
       if (k === "v") {
