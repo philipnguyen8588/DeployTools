@@ -253,6 +253,27 @@ export function Terminal({
       return true;
     });
 
+    // --- IME fix (Vietnamese Telex, CJK, …) ---
+    // xterm reads composed text from its hidden helper textarea but never
+    // clears it. In WKWebView (macOS) the trailing `input` event that
+    // would normally clear the textarea is swallowed while xterm is still
+    // "sending" the composition, so the first composed character sticks
+    // in the textarea and every later composition wedges — you can type
+    // one character (e.g. Telex `w` → `ư`) and then nothing. Clearing the
+    // textarea right after xterm has consumed each composition keeps the
+    // next one starting from a clean slate.
+    const helperTextarea = term.textarea;
+    const handleCompositionEnd = () => {
+      // Defer to the macrotask queue. xterm registers its own
+      // compositionend listener first (during `term.open`), so its 0 ms
+      // timer that reads + sends the composed text runs before ours —
+      // we only clear once that data is safely on its way to the PTY.
+      window.setTimeout(() => {
+        if (helperTextarea) helperTextarea.value = "";
+      }, 0);
+    };
+    helperTextarea?.addEventListener("compositionend", handleCompositionEnd);
+
     // Fit, then open the backend terminal with matching cols/rows.
     fit.fit();
     const { cols, rows } = term;
@@ -369,6 +390,7 @@ export function Terminal({
       ro.disconnect();
       unlistenData?.();
       unlistenExit?.();
+      helperTextarea?.removeEventListener("compositionend", handleCompositionEnd);
       containerRef.current?.removeEventListener("contextmenu", onContext);
       if (terminalIdRef.current) {
         void api.termClose(sessionId, terminalIdRef.current).catch(() => {});
