@@ -254,25 +254,30 @@ export function Terminal({
     });
 
     // --- IME fix (Vietnamese Telex, CJK, …) ---
-    // xterm reads composed text from its hidden helper textarea but never
-    // clears it. In WKWebView (macOS) the trailing `input` event that
-    // would normally clear the textarea is swallowed while xterm is still
-    // "sending" the composition, so the first composed character sticks
-    // in the textarea and every later composition wedges — you can type
-    // one character (e.g. Telex `w` → `ư`) and then nothing. Clearing the
-    // textarea right after xterm has consumed each composition keeps the
-    // next one starting from a clean slate.
+    // xterm reads composed text from its hidden helper textarea on a
+    // deferred (setTimeout) tick and never clears the textarea. In
+    // WKWebView (macOS) this wedges back-to-back compositions: typing two
+    // letters with no separator (e.g. Telex "ab") loses the second one,
+    // because xterm's deferred read/clear of the first composition races
+    // with the start of the second.
+    //
+    // We take over the commit: on `compositionend` we synchronously clear
+    // the helper textarea — which runs before xterm's deferred read, so
+    // xterm extracts an empty string and does NOT also send the text (no
+    // duplication) — and forward the committed text to the PTY ourselves.
+    // xterm still handles compositionstart/update, so the inline preview
+    // (underlined text while composing) keeps working. Capture phase so
+    // we always clear before xterm's own listener runs.
     const helperTextarea = term.textarea;
-    const handleCompositionEnd = () => {
-      // Defer to the macrotask queue. xterm registers its own
-      // compositionend listener first (during `term.open`), so its 0 ms
-      // timer that reads + sends the composed text runs before ours —
-      // we only clear once that data is safely on its way to the PTY.
-      window.setTimeout(() => {
-        if (helperTextarea) helperTextarea.value = "";
-      }, 0);
+    const handleCompositionEnd = (e: CompositionEvent) => {
+      const text = e.data;
+      if (helperTextarea) helperTextarea.value = "";
+      if (text && terminalIdRef.current) {
+        useSessions.getState().bumpActivity(sessionId);
+        void api.termWrite(sessionId, terminalIdRef.current, text);
+      }
     };
-    helperTextarea?.addEventListener("compositionend", handleCompositionEnd);
+    helperTextarea?.addEventListener("compositionend", handleCompositionEnd, true);
 
     // Fit, then open the backend terminal with matching cols/rows.
     fit.fit();
@@ -390,7 +395,11 @@ export function Terminal({
       ro.disconnect();
       unlistenData?.();
       unlistenExit?.();
-      helperTextarea?.removeEventListener("compositionend", handleCompositionEnd);
+      helperTextarea?.removeEventListener(
+        "compositionend",
+        handleCompositionEnd,
+        true,
+      );
       containerRef.current?.removeEventListener("contextmenu", onContext);
       if (terminalIdRef.current) {
         void api.termClose(sessionId, terminalIdRef.current).catch(() => {});
