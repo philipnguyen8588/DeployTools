@@ -37,12 +37,33 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         // Remembers window size / position / maximize state between
-        // launches. No config needed — sensible defaults cover every
-        // window the app creates.
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // launches. We deliberately drop the DECORATIONS flag: the app
+        // always uses custom chrome (`decorations: false`), and the
+        // plugin's default restores *all* state — so a stale
+        // decorations=true persisted by an earlier build would bring the
+        // native macOS title bar back, overriding the config.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        - tauri_plugin_window_state::StateFlags::DECORATIONS,
+                )
+                .build(),
+        )
         .setup(|app| {
             let state = AppState::new(app.handle().clone());
             app.manage(state);
+
+            // Belt-and-suspenders: force the native title bar off after the
+            // window-state plugin has restored. Guarantees no native macOS
+            // chrome even if a stale decorations=true was saved previously.
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_decorations(false);
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
