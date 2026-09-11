@@ -112,6 +112,8 @@ pub fn run() {
             commands::deploy::deploy_folder,
             commands::deploy::deploy_rsync,
             commands::deploy::deploy_sync,
+            commands::deploy::download_to_mapped,
+            commands::deploy::download_to,
             commands::deploy::list_local_tree,
             commands::deploy::compare_file,
             commands::deploy::compare_folder,
@@ -146,6 +148,11 @@ pub fn run() {
             // System terminal (local shell or SSH in a native window)
             commands::shell::open_local_terminal,
             commands::shell::open_ssh_terminal,
+            commands::shell::reveal_path,
+            // SSH local-forward tunnels
+            commands::tunnel::start_tunnel,
+            commands::tunnel::stop_tunnel,
+            commands::tunnel::list_tunnels,
             // IDE launcher (VSCode / PyCharm / IntelliJ / Antigravity + custom)
             commands::ide::list_ides,
             commands::ide::set_ide_path,

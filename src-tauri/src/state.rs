@@ -39,6 +39,9 @@ pub struct AppState {
     /// Cancellation senders for follow-mode streams, keyed by the same
     /// (session, tag) pair frontend uses for filter chips.
     pub follow_cancellers: Arc<DashMap<(SessionId, String), oneshot::Sender<()>>>,
+
+    /// Active SSH local-forward tunnels, keyed by tunnel id.
+    pub tunnels: Arc<DashMap<String, crate::commands::tunnel::TunnelHandle>>,
 }
 
 impl AppState {
@@ -56,6 +59,7 @@ impl AppState {
             ftp_sessions: Arc::new(DashMap::new()),
             inflight: Arc::new(DashMap::new()),
             follow_cancellers: Arc::new(DashMap::new()),
+            tunnels: Arc::new(DashMap::new()),
         }
     }
 

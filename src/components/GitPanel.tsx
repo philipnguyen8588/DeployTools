@@ -293,23 +293,21 @@ function CommitsView({
   const [loading, setLoading] = useState(true);
   const [picked, setPicked] = useState<GitCommit | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const refresh = useCallback(async () => {
     setLoading(true);
-    (async () => {
-      try {
-        const c = await api.gitLog(projectId, 100);
-        if (!cancelled) setCommits(c);
-      } catch (e) {
-        toast.error(`${e}`);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const c = await api.gitLog(projectId, 100);
+      setCommits(c);
+    } catch (e) {
+      toast.error(`${e}`);
+    } finally {
+      setLoading(false);
+    }
   }, [projectId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   if (picked) {
     return (
@@ -327,7 +325,18 @@ function CommitsView({
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b bg-muted/30 p-1.5 text-xs text-muted-foreground">
         <GitCommitIcon className="h-3.5 w-3.5" />
-        {commits.length} commits · click one to see its files
+        <span className="flex-1">
+          {commits.length} commits · click one to see its files
+        </span>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          onClick={() => void refresh()}
+          disabled={loading}
+          title="Refresh"
+        >
+          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+        </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {loading ? (

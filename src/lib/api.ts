@@ -153,6 +153,21 @@ export const deploySync = (
     "deploy_sync",
     { projectId, sessionId, deleteExtraneous },
   );
+export const downloadToMapped = (
+  projectId: UUID,
+  sessionId: string,
+  remotePaths: string[],
+) =>
+  invoke<{ downloaded: number; skipped: number }>("download_to_mapped", {
+    projectId,
+    sessionId,
+    remotePaths,
+  });
+export const downloadTo = (
+  sessionId: string,
+  remotePath: string,
+  localDir: string,
+) => invoke<number>("download_to", { sessionId, remotePath, localDir });
 export const listLocalTree = (projectId: UUID, relativePath: string) =>
   invoke<LocalEntry[]>("list_local_tree", { projectId, relativePath });
 export const compareFile = (
@@ -300,6 +315,33 @@ export const openLocalTerminal = (cwd?: string) =>
   invoke<void>("open_local_terminal", { cwd });
 export const openSshTerminal = (serverId: UUID, remotePath?: string) =>
   invoke<void>("open_ssh_terminal", { serverId, remotePath });
+export const revealPath = (path: string) =>
+  invoke<void>("reveal_path", { path });
+
+// --- SSH local-forward tunnels ---
+export interface TunnelInfo {
+  id: string;
+  session_id: string;
+  local_port: number;
+  remote_host: string;
+  remote_port: number;
+}
+export const startTunnel = (
+  sessionId: string,
+  localPort: number,
+  remoteHost: string,
+  remotePort: number,
+) =>
+  invoke<TunnelInfo>("start_tunnel", {
+    sessionId,
+    localPort,
+    remoteHost,
+    remotePort,
+  });
+export const stopTunnel = (tunnelId: string) =>
+  invoke<void>("stop_tunnel", { tunnelId });
+export const listTunnels = (sessionId?: string) =>
+  invoke<TunnelInfo[]>("list_tunnels", { sessionId: sessionId ?? null });
 
 // --- IDE launcher (VSCode / PyCharm / IntelliJ / Antigravity) ---
 export interface IdeEntry {

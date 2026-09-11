@@ -79,13 +79,7 @@ pub async fn deploy_folder(
     }
 
     // Compile excludes
-    let mut builder = GlobSetBuilder::new();
-    for pat in &project.excludes {
-        if let Ok(g) = Glob::new(pat) {
-            builder.add(g);
-        }
-    }
-    let globs = builder.build().map_err(|e| AppError::Other(e.to_string()))?;
+    let globs = build_globset(&project.excludes)?;
 
     // Walk the local tree to build a file list (relative paths).
     let mut files: Vec<String> = Vec::new();
@@ -191,6 +185,87 @@ fn walk_local_files<'a>(
     })
 }
 
+/// Result of a batch download.
+#[derive(Serialize, Clone)]
+pub struct DownloadStats {
+    /// Total files written locally.
+    pub downloaded: u32,
+    /// Top-level paths skipped because they lie outside the project's
+    /// remote base (so they have no mapped local destination).
+    pub skipped: u32,
+}
+
+/// Download one or more remote paths straight into the project's mapped
+/// local folder (mirror of `project.local_path`). Each remote path is
+/// resolved relative to `project.remote_path`; anything outside that base
+/// is skipped and counted. Files + directories are supported (recursive).
+#[tauri::command]
+pub async fn download_to_mapped(
+    project_id: Uuid,
+    session_id: String,
+    remote_paths: Vec<String>,
+    state: State<'_, AppState>,
+) -> AppResult<DownloadStats> {
+    let (project, _) = resolve_project_server(&state, project_id).await?;
+    let session = state.sessions.get(&session_id)?;
+
+    let base = project.remote_path.trim_end_matches('/').to_string();
+    let mut downloaded = 0u32;
+    let mut skipped = 0u32;
+
+    for remote in &remote_paths {
+        crate::ssh::sftp::validate_remote_path(remote)?;
+        let trimmed = remote.trim_end_matches('/');
+
+        // Path relative to the project's remote base.
+        let rel = if trimmed == base {
+            String::new()
+        } else if let Some(stripped) = trimmed.strip_prefix(&format!("{base}/")) {
+            stripped.to_string()
+        } else {
+            skipped += 1;
+            crate::ssh::activity::warn(
+                &state.app,
+                "sftp",
+                format!("skip (outside mapped folder): {remote}"),
+                Some(&session.id),
+            );
+            continue;
+        };
+
+        // `rel` is derived from a validated remote path (no `..`), so the
+        // join always stays within project.local_path.
+        let local_target = if rel.is_empty() {
+            project.local_path.clone()
+        } else {
+            project.local_path.join(&rel)
+        };
+
+        downloaded += crate::ssh::sftp::download_tree(&session, remote, &local_target).await?;
+    }
+
+    Ok(DownloadStats {
+        downloaded,
+        skipped,
+    })
+}
+
+/// Download a single remote path (file or directory) into a chosen local
+/// directory, preserving the remote basename. Returns files written.
+#[tauri::command]
+pub async fn download_to(
+    session_id: String,
+    remote_path: String,
+    local_dir: String,
+    state: State<'_, AppState>,
+) -> AppResult<u32> {
+    crate::ssh::sftp::validate_remote_path(&remote_path)?;
+    let session = state.sessions.get(&session_id)?;
+    let base = remote_basename(&remote_path);
+    let target = Path::new(&local_dir).join(base);
+    crate::ssh::sftp::download_tree(&session, &remote_path, &target).await
+}
+
 /// Native SFTP sync — a pure-Rust "rsync-lite" that works without any
 /// external binary. Compares local and remote trees by size + mtime and
 /// uploads only what changed. Optionally deletes remote files that no
@@ -208,13 +283,7 @@ pub async fn deploy_sync(
     let (project, server) = resolve_project_server(&state, project_id).await?;
 
     // Compile excludes
-    let mut builder = GlobSetBuilder::new();
-    for pat in &project.excludes {
-        if let Ok(g) = Glob::new(pat) {
-            builder.add(g);
-        }
-    }
-    let globs = builder.build().map_err(|e| AppError::Other(e.to_string()))?;
+    let globs = build_globset(&project.excludes)?;
 
     let canon_root = tokio::fs::canonicalize(&project.local_path).await?;
 
@@ -275,8 +344,10 @@ pub async fn deploy_sync(
     if delete_extraneous {
         for (rel, r) in &remote_map {
             if !local_map.contains_key(rel) {
-                // Be safe: never touch excluded patterns on the remote
-                if globs.is_match(rel) {
+                // Be safe: never touch excluded patterns on the remote.
+                // `path_excluded` matches nested segments too, so a bare
+                // `__pycache__` / `*.pyc` protects files at any depth.
+                if path_excluded(&globs, rel) {
                     continue;
                 }
                 to_delete.push((rel.clone(), r.is_dir));
@@ -649,13 +720,7 @@ pub async fn compare_folder(
     let session = state.sessions.get(&session_id)?;
 
     // Compile exclude globs
-    let mut builder = GlobSetBuilder::new();
-    for pat in &project.excludes {
-        if let Ok(g) = Glob::new(pat) {
-            builder.add(g);
-        }
-    }
-    let globs = builder.build().map_err(|e| AppError::Other(e.to_string()))?;
+    let globs = build_globset(&project.excludes)?;
 
     // Canonicalize & validate local root
     let local_root = project.local_path.join(&relative_path);
@@ -897,13 +962,7 @@ pub async fn list_local_tree(
     }
 
     // Compile the exclude globset once.
-    let mut builder = GlobSetBuilder::new();
-    for pat in &project.excludes {
-        if let Ok(g) = Glob::new(pat) {
-            builder.add(g);
-        }
-    }
-    let globs = builder.build().map_err(|e| AppError::Other(e.to_string()))?;
+    let globs = build_globset(&project.excludes)?;
 
     let mut entries = Vec::new();
     let mut rd = tokio::fs::read_dir(&canon_dir).await?;
@@ -975,6 +1034,45 @@ async fn open_ephemeral(
     });
     state.sessions.insert(session.clone());
     Ok(session)
+}
+
+fn remote_basename(p: &str) -> &str {
+    p.trim_end_matches('/').rsplit('/').next().unwrap_or(p)
+}
+
+/// Patterns that are ALWAYS excluded from deploy / sync / compare, on top
+/// of the project's own excludes. These are build artifacts + VCS metadata
+/// that should never be uploaded to — nor deleted from — a server. This
+/// protects existing projects (created before a pattern was in the
+/// defaults) from destructive sync-delete on e.g. `__pycache__`.
+fn baseline_excludes() -> &'static [&'static str] {
+    &["__pycache__", "*.pyc", "*.pyo", ".git"]
+}
+
+/// Build the exclude globset from the project's patterns plus the
+/// always-on baseline. Used everywhere excludes are honored so behavior
+/// stays consistent.
+fn build_globset(excludes: &[String]) -> AppResult<globset::GlobSet> {
+    let mut builder = GlobSetBuilder::new();
+    for pat in baseline_excludes() {
+        if let Ok(g) = Glob::new(pat) {
+            builder.add(g);
+        }
+    }
+    for pat in excludes {
+        if let Ok(g) = Glob::new(pat) {
+            builder.add(g);
+        }
+    }
+    builder.build().map_err(|e| AppError::Other(e.to_string()))
+}
+
+/// True if a relative path should be excluded. Matches the full path AND
+/// each individual segment — globset's `*` never crosses `/`, so a bare
+/// pattern like `__pycache__` or `*.pyc` would otherwise miss nested
+/// entries such as `app/service/__pycache__/foo.pyc`.
+fn path_excluded(globs: &globset::GlobSet, rel: &str) -> bool {
+    globs.is_match(rel) || rel.split('/').any(|seg| globs.is_match(seg))
 }
 
 fn join_remote(base: &str, rel: &str) -> String {

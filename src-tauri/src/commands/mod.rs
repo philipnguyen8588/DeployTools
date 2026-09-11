@@ -19,4 +19,5 @@ pub mod settings;
 pub mod sftp;
 pub mod shell;
 pub mod terminal;
+pub mod tunnel;
 pub mod vault;

@@ -93,6 +93,7 @@ export function ServerTab({ tab, isActive = true }: Props) {
                   sessionId={tab.session.id}
                   projectId={project?.id ?? null}
                   remoteBase={project?.remote_path ?? "/"}
+                  localBase={project?.local_path ?? ""}
                   relativePath={tab.localPath}
                   onRelativePathChange={(p) => updateLocalPath(tab.session.id, p)}
                 />
