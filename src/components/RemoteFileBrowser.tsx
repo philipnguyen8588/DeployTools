@@ -51,6 +51,8 @@ export function RemoteFileBrowser({
   const [entries, setEntries] = useState<RemoteEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [selection, setSelection] = useState<RemoteEntry | null>(null);
+  /** Multi-selection for batch download — keyed by full_path. */
+  const [checked, setChecked] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [compareFor, setCompareFor] = useState<string | null>(null);
   const [compareFolderFor, setCompareFolderFor] = useState<string | null>(null);
@@ -72,6 +74,28 @@ export function RemoteFileBrowser({
     void refresh();
   }, [refresh]);
 
+  // Clear the multi-selection when the directory changes.
+  useEffect(() => {
+    setChecked(new Set());
+  }, [path]);
+
+  function toggleChecked(fp: string) {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(fp)) next.delete(fp);
+      else next.add(fp);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setChecked((prev) =>
+      prev.size === entries.length
+        ? new Set()
+        : new Set(entries.map((e) => e.full_path)),
+    );
+  }
+
   function cdUp() {
     if (path === "/" || path === "") return;
     const parent = path.replace(/\/+$/, "").split("/").slice(0, -1).join("/") || "/";
@@ -88,7 +112,7 @@ export function RemoteFileBrowser({
       description: (
         <div className="space-y-1.5">
           <div>This will overwrite the remote copy if it already exists.</div>
-          <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+          <div className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
             {selected} → {remote}
           </div>
         </div>
@@ -129,7 +153,7 @@ export function RemoteFileBrowser({
               ? "This will recursively delete the folder and everything inside it. This cannot be undone."
               : "This will delete the remote file. This cannot be undone."}
           </div>
-          <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+          <div className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
             {e.full_path}
           </div>
         </div>
@@ -147,8 +171,46 @@ export function RemoteFileBrowser({
     }
   }
 
-  async function downloadEntry(e: RemoteEntry) {
-    if (e.is_dir) return;
+  /** Download the given remote paths straight into the project's mapped
+   *  local folder (project.local_path mirror). Paths outside the project
+   *  remote base are skipped by the backend and reported. */
+  async function downloadMapped(paths: string[]) {
+    if (!projectId) {
+      toast.error("No project mapped to this session");
+      return;
+    }
+    if (paths.length === 0) return;
+    const p = toast.loading(`Downloading ${paths.length} item(s)…`);
+    try {
+      const res = await api.downloadToMapped(projectId, sessionId, paths);
+      let msg = `Downloaded ${res.downloaded} file(s)`;
+      if (res.skipped > 0) {
+        msg += ` · skipped ${res.skipped} outside the mapped folder`;
+      }
+      toast.success(msg, { id: p });
+    } catch (err) {
+      toast.error(`${err}`, { id: p });
+    }
+  }
+
+  /** Download a single entry to a location the user picks in a dialog. */
+  async function downloadToDialog(e: RemoteEntry) {
+    if (e.is_dir) {
+      const dir = await openDialog({
+        directory: true,
+        title: `Download ${e.name} into…`,
+      });
+      if (typeof dir !== "string") return;
+      const p = toast.loading(`Downloading ${e.name}/…`);
+      try {
+        const n = await api.downloadTo(sessionId, e.full_path, dir);
+        toast.success(`Downloaded ${e.name}/ — ${n} files`, { id: p });
+      } catch (err) {
+        toast.error(`${err}`, { id: p });
+      }
+      return;
+    }
+
     const dst = await saveDialog({
       defaultPath: e.name,
       title: `Save ${e.name} to…`,
@@ -160,7 +222,7 @@ export function RemoteFileBrowser({
       description: (
         <div className="space-y-1.5">
           <div>If the destination file exists, it will be overwritten.</div>
-          <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+          <div className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
             {e.full_path} → {dst}
           </div>
         </div>
@@ -188,7 +250,7 @@ export function RemoteFileBrowser({
       description: (
         <div className="space-y-1.5">
           <div>The remote file / folder will be renamed.</div>
-          <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+          <div className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
             {e.full_path} → {to}
           </div>
         </div>
@@ -219,50 +281,67 @@ export function RemoteFileBrowser({
 
   function buildMenuItems(e: RemoteEntry): ContextMenuItem[] {
     const rel = relativeToProject(e.full_path);
-    const canCompare = !!projectId && rel !== null;
-    return [
-      {
-        label: "Download…",
+    const canMap = !!projectId && rel !== null;
+    const inBatch = checked.has(e.full_path) && checked.size > 1;
+    const items: ContextMenuItem[] = [];
+
+    if (inBatch) {
+      items.push({
+        label: `Download ${checked.size} selected to mapped folder`,
         icon: <Download className="h-3.5 w-3.5" />,
-        disabled: e.is_dir,
-        onClick: () => void downloadEntry(e),
+        disabled: !projectId,
+        onClick: () => void downloadMapped(Array.from(checked)),
+      });
+      items.push({ separator: true, label: "", onClick: () => {} });
+    }
+
+    items.push({
+      label: "Download to mapped folder",
+      icon: <Download className="h-3.5 w-3.5" />,
+      disabled: !canMap,
+      onClick: () => void downloadMapped([e.full_path]),
+    });
+    items.push({
+      label: "Download to…",
+      icon: <Download className="h-3.5 w-3.5" />,
+      onClick: () => void downloadToDialog(e),
+    });
+    items.push({
+      label: e.is_dir ? "Compare folder with local" : "Compare with local",
+      icon: e.is_dir ? (
+        <FolderGit2 className="h-3.5 w-3.5" />
+      ) : (
+        <GitCompare className="h-3.5 w-3.5" />
+      ),
+      disabled: !canMap,
+      onClick: () => {
+        if (rel === null) return;
+        if (e.is_dir) setCompareFolderFor(rel);
+        else setCompareFor(rel);
       },
-      {
-        label: e.is_dir ? "Compare folder with local" : "Compare with local",
-        icon: e.is_dir ? (
-          <FolderGit2 className="h-3.5 w-3.5" />
-        ) : (
-          <GitCompare className="h-3.5 w-3.5" />
-        ),
-        disabled: !canCompare,
-        onClick: () => {
-          if (rel === null) return;
-          if (e.is_dir) setCompareFolderFor(rel);
-          else setCompareFor(rel);
-        },
+    });
+    items.push({ separator: true, label: "", onClick: () => {} });
+    items.push({
+      label: "Rename…",
+      icon: <Edit3 className="h-3.5 w-3.5" />,
+      onClick: () => void renameEntry(e),
+    });
+    items.push({
+      label: "Copy absolute path",
+      icon: <Copy className="h-3.5 w-3.5" />,
+      onClick: () => {
+        void navigator.clipboard.writeText(e.full_path);
+        toast.success("Copied");
       },
-      { separator: true, label: "", onClick: () => {} },
-      {
-        label: "Rename…",
-        icon: <Edit3 className="h-3.5 w-3.5" />,
-        onClick: () => void renameEntry(e),
-      },
-      {
-        label: "Copy full path",
-        icon: <Copy className="h-3.5 w-3.5" />,
-        onClick: () => {
-          void navigator.clipboard.writeText(e.full_path);
-          toast.success("Copied");
-        },
-      },
-      { separator: true, label: "", onClick: () => {} },
-      {
-        label: e.is_dir ? "Delete folder" : "Delete",
-        icon: <Trash2 className="h-3.5 w-3.5" />,
-        danger: true,
-        onClick: () => void removeEntry(e),
-      },
-    ];
+    });
+    items.push({ separator: true, label: "", onClick: () => {} });
+    items.push({
+      label: e.is_dir ? "Delete folder" : "Delete",
+      icon: <Trash2 className="h-3.5 w-3.5" />,
+      danger: true,
+      onClick: () => void removeEntry(e),
+    });
+    return items;
   }
 
   return (
@@ -287,12 +366,25 @@ export function RemoteFileBrowser({
         <Button size="icon-sm" variant="ghost" onClick={uploadFile} title="Upload">
           <Upload className="h-3.5 w-3.5" />
         </Button>
+        {checked.size > 0 && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void downloadMapped(Array.from(checked))}
+            title="Download selected to mapped folder"
+            disabled={!projectId}
+            className="h-6 gap-1 px-2 text-xs"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download {checked.size}
+          </Button>
+        )}
         <Button
           size="icon-sm"
           variant="ghost"
-          onClick={() => selection && downloadEntry(selection)}
-          title="Download"
-          disabled={!selection || selection.is_dir}
+          onClick={() => selection && void downloadToDialog(selection)}
+          title="Download to…"
+          disabled={!selection}
         >
           <Download className="h-3.5 w-3.5" />
         </Button>
@@ -312,6 +404,20 @@ export function RemoteFileBrowser({
         <table className="w-full text-xs">
           <thead className="sticky top-0 z-10 bg-card text-muted-foreground shadow-[0_1px_0_0_hsl(var(--border))]">
             <tr>
+              <th className="w-8 px-2 py-1.5 text-center font-medium">
+                <input
+                  type="checkbox"
+                  className="cursor-pointer align-middle accent-primary"
+                  checked={entries.length > 0 && checked.size === entries.length}
+                  ref={(el) => {
+                    if (el)
+                      el.indeterminate =
+                        checked.size > 0 && checked.size < entries.length;
+                  }}
+                  onChange={toggleAll}
+                  title="Select all"
+                />
+              </th>
               <th className="px-3 py-1.5 text-left font-medium">Name</th>
               <th className="px-3 py-1.5 text-right font-medium">Size</th>
               <th className="px-3 py-1.5 text-left font-medium">Modified</th>
@@ -325,7 +431,7 @@ export function RemoteFileBrowser({
                 onClick={() => setSelection(e)}
                 onDoubleClick={() => {
                   if (e.is_dir) onPathChange(e.full_path);
-                  else void downloadEntry(e);
+                  else void downloadToDialog(e);
                 }}
                 onContextMenu={(ev) => {
                   ev.preventDefault();
@@ -337,6 +443,17 @@ export function RemoteFileBrowser({
                   selection?.full_path === e.full_path && "bg-primary/10",
                 )}
               >
+                <td
+                  className="px-2 py-1 text-center"
+                  onClick={(ev) => ev.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    className="cursor-pointer align-middle accent-primary"
+                    checked={checked.has(e.full_path)}
+                    onChange={() => toggleChecked(e.full_path)}
+                  />
+                </td>
                 <td className="px-3 py-1">
                   <span className="flex items-center gap-2">
                     {e.is_dir ? (

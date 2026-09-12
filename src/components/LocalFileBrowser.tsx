@@ -8,6 +8,7 @@ import {
   GitCompare,
   Copy,
   FolderGit2,
+  FolderOpen,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -25,6 +26,9 @@ interface Props {
   sessionId: string;
   projectId: string | null;
   remoteBase: string;
+  /** Absolute local root of the project (project.local_path). Used to
+   *  compute absolute paths for "Copy absolute path" / "Show in …". */
+  localBase: string;
   relativePath: string;
   onRelativePathChange: (p: string) => void;
 }
@@ -39,12 +43,15 @@ export function LocalFileBrowser({
   sessionId,
   projectId,
   remoteBase,
+  localBase,
   relativePath,
   onRelativePathChange,
 }: Props) {
   const [entries, setEntries] = useState<LocalEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [selection, setSelection] = useState<LocalEntry | null>(null);
+  /** Multi-selection for batch upload — keyed by relative_path. */
+  const [checked, setChecked] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [compareFor, setCompareFor] = useState<string | null>(null);
   const [compareFolderFor, setCompareFolderFor] = useState<string | null>(null);
@@ -67,6 +74,98 @@ export function LocalFileBrowser({
     void refresh();
   }, [refresh]);
 
+  // Clear the multi-selection whenever the directory changes — the
+  // checked relative paths no longer correspond to visible rows.
+  useEffect(() => {
+    setChecked(new Set());
+  }, [relativePath]);
+
+  function toggleChecked(rel: string) {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(rel)) next.delete(rel);
+      else next.add(rel);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setChecked((prev) =>
+      prev.size === entries.length
+        ? new Set()
+        : new Set(entries.map((e) => e.relative_path)),
+    );
+  }
+
+  /** Absolute path of an entry on the host OS (localBase + relative). */
+  function absPath(rel: string): string {
+    const sep = localBase.includes("\\") ? "\\" : "/";
+    const base = localBase.replace(/[\\/]+$/, "");
+    const relOs = sep === "\\" ? rel.replace(/\//g, "\\") : rel;
+    return relOs ? `${base}${sep}${relOs}` : base;
+  }
+
+  function revealLabel(): string {
+    const ua = navigator.userAgent;
+    if (/Mac/i.test(ua)) return "Show in Finder";
+    if (/Win/i.test(ua)) return "Show in Explorer";
+    return "Show in file manager";
+  }
+
+  async function revealEntry(e: LocalEntry) {
+    try {
+      await api.revealPath(absPath(e.relative_path));
+    } catch (err) {
+      toast.error(`${err}`);
+    }
+  }
+
+  /** Upload every checked entry in one batch (no per-item confirm). */
+  async function uploadChecked() {
+    if (!projectId || checked.size === 0) return;
+    const targets = entries.filter((e) => checked.has(e.relative_path));
+    const ok = await confirm({
+      title: `Upload ${targets.length} item(s) to server?`,
+      description: (
+        <div className="space-y-1.5">
+          <div>
+            Folders are uploaded recursively (respecting excludes). Existing
+            remote copies will be overwritten.
+          </div>
+          <div className="max-h-32 overflow-y-auto rounded bg-muted px-2 py-1 font-mono text-xs">
+            {targets.map((t) => (
+              <div key={t.relative_path} className="break-all">
+                {t.relative_path || t.name}
+                {t.is_dir ? "/" : ""}
+              </div>
+            ))}
+          </div>
+        </div>
+      ),
+      confirmText: "Upload all",
+    });
+    if (!ok) return;
+
+    const p = toast.loading(`Uploading ${targets.length} item(s)…`);
+    let files = 0;
+    try {
+      for (const t of targets) {
+        if (t.is_dir) {
+          files += await api.deployFolder(projectId, t.relative_path, sessionId);
+        } else {
+          await api.deployFile(projectId, t.relative_path, sessionId);
+          files += 1;
+        }
+      }
+      toast.success(`Uploaded ${targets.length} item(s) — ${files} files`, {
+        id: p,
+      });
+      setChecked(new Set());
+    } catch (err) {
+      toast.error(`${err}`, { id: p });
+    }
+  }
+
   function cdUp() {
     if (!relativePath) return;
     const parent = relativePath.split("/").slice(0, -1).join("/");
@@ -84,7 +183,7 @@ export function LocalFileBrowser({
             This will {e.is_dir ? "upload every file in the folder (respecting excludes) and" : ""}
             {" "}overwrite the remote copy if it exists.
           </div>
-          <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+          <div className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
             {e.relative_path || e.name} → {mirror}
           </div>
         </div>
@@ -108,35 +207,57 @@ export function LocalFileBrowser({
   }
 
   function buildMenuItems(e: LocalEntry): ContextMenuItem[] {
-    return [
-      {
-        label: e.is_dir ? "Upload folder to server" : "Upload to server",
+    const inBatch = checked.has(e.relative_path) && checked.size > 1;
+    const items: ContextMenuItem[] = [];
+
+    if (inBatch) {
+      items.push({
+        label: `Upload ${checked.size} selected to server`,
         icon: <Upload className="h-3.5 w-3.5" />,
-        onClick: () => void uploadEntry(e),
+        onClick: () => void uploadChecked(),
+      });
+    }
+    items.push({
+      label: e.is_dir ? "Upload folder to server" : "Upload to server",
+      icon: <Upload className="h-3.5 w-3.5" />,
+      onClick: () => void uploadEntry(e),
+    });
+    items.push({
+      label: e.is_dir ? "Compare folder with remote" : "Compare with remote",
+      icon: e.is_dir ? (
+        <FolderGit2 className="h-3.5 w-3.5" />
+      ) : (
+        <GitCompare className="h-3.5 w-3.5" />
+      ),
+      disabled: !projectId,
+      onClick: () =>
+        e.is_dir
+          ? setCompareFolderFor(e.relative_path)
+          : setCompareFor(e.relative_path),
+    });
+    items.push({ separator: true, label: "", onClick: () => {} });
+    items.push({
+      label: revealLabel(),
+      icon: <FolderOpen className="h-3.5 w-3.5" />,
+      onClick: () => void revealEntry(e),
+    });
+    items.push({
+      label: "Copy absolute path",
+      icon: <Copy className="h-3.5 w-3.5" />,
+      onClick: () => {
+        void navigator.clipboard.writeText(absPath(e.relative_path));
+        toast.success("Copied");
       },
-      {
-        label: e.is_dir ? "Compare folder with remote" : "Compare with remote",
-        icon: e.is_dir ? (
-          <FolderGit2 className="h-3.5 w-3.5" />
-        ) : (
-          <GitCompare className="h-3.5 w-3.5" />
-        ),
-        disabled: !projectId,
-        onClick: () =>
-          e.is_dir
-            ? setCompareFolderFor(e.relative_path)
-            : setCompareFor(e.relative_path),
+    });
+    items.push({
+      label: "Copy relative path",
+      icon: <Copy className="h-3.5 w-3.5" />,
+      onClick: () => {
+        void navigator.clipboard.writeText(e.relative_path);
+        toast.success("Copied");
       },
-      { separator: true, label: "", onClick: () => {} },
-      {
-        label: "Copy relative path",
-        icon: <Copy className="h-3.5 w-3.5" />,
-        onClick: () => {
-          void navigator.clipboard.writeText(e.relative_path);
-          toast.success("Copied");
-        },
-      },
-    ];
+    });
+    return items;
   }
 
   if (!projectId) {
@@ -164,6 +285,18 @@ export function LocalFileBrowser({
           readOnly
           className="h-6 flex-1 font-mono text-xs"
         />
+        {checked.size > 0 && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void uploadChecked()}
+            title="Upload selected items"
+            className="h-6 gap-1 px-2 text-xs"
+          >
+            <Upload className="h-3.5 w-3.5" />
+            Upload {checked.size}
+          </Button>
+        )}
         <Button
           size="icon-sm"
           variant="ghost"
@@ -179,6 +312,20 @@ export function LocalFileBrowser({
         <table className="w-full text-xs">
           <thead className="sticky top-0 z-10 bg-card text-muted-foreground shadow-[0_1px_0_0_hsl(var(--border))]">
             <tr>
+              <th className="w-8 px-2 py-1.5 text-center font-medium">
+                <input
+                  type="checkbox"
+                  className="cursor-pointer align-middle accent-primary"
+                  checked={entries.length > 0 && checked.size === entries.length}
+                  ref={(el) => {
+                    if (el)
+                      el.indeterminate =
+                        checked.size > 0 && checked.size < entries.length;
+                  }}
+                  onChange={toggleAll}
+                  title="Select all"
+                />
+              </th>
               <th className="px-3 py-1.5 text-left font-medium">Name</th>
               <th className="px-3 py-1.5 text-right font-medium">Size</th>
               <th className="px-3 py-1.5 text-left font-medium">Modified</th>
@@ -206,6 +353,17 @@ export function LocalFileBrowser({
                 )}
                 title={e.excluded ? "Excluded by pattern" : undefined}
               >
+                <td
+                  className="px-2 py-1 text-center"
+                  onClick={(ev) => ev.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    className="cursor-pointer align-middle accent-primary"
+                    checked={checked.has(e.relative_path)}
+                    onChange={() => toggleChecked(e.relative_path)}
+                  />
+                </td>
                 <td className="px-3 py-1">
                   <span className="flex items-center gap-2">
                     {e.is_dir ? (

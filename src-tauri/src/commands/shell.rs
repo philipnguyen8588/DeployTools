@@ -28,6 +28,66 @@ pub async fn open_local_terminal(cwd: Option<String>) -> AppResult<()> {
     spawn_terminal(cwd.as_deref(), None)
 }
 
+/// Reveal a local file / folder in the OS file manager, selecting the
+/// item when the platform supports it (Explorer /select, Finder -R).
+#[tauri::command]
+pub async fn reveal_path(path: String) -> AppResult<()> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(AppError::Other(format!("path does not exist: {path}")));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // explorer.exe returns exit code 1 even on success, so we don't
+        // check the status — just fire it.
+        Command::new("explorer")
+            .arg(format!("/select,{path}"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| AppError::Other(format!("open explorer: {e}")))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| AppError::Other(format!("open finder: {e}")))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // No universal "select the file" flag — open the containing dir.
+        let target = if p.is_dir() {
+            p.to_path_buf()
+        } else {
+            p.parent().map(|d| d.to_path_buf()).unwrap_or_else(|| p.to_path_buf())
+        };
+        Command::new("xdg-open")
+            .arg(target)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| AppError::Other(format!("xdg-open: {e}")))?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        Err(AppError::Other("reveal not supported on this OS".into()))
+    }
+}
+
 #[tauri::command]
 pub async fn open_ssh_terminal(
     server_id: Uuid,

@@ -88,6 +88,19 @@ pub async fn open_session(
 
 #[tauri::command]
 pub async fn close_session(session_id: String, state: State<'_, AppState>) -> AppResult<()> {
+    // Tear down any local-forward tunnels bound to this session first.
+    let tunnel_ids: Vec<String> = state
+        .tunnels
+        .iter()
+        .filter(|kv| kv.value().info.session_id == session_id)
+        .map(|kv| kv.key().clone())
+        .collect();
+    for id in tunnel_ids {
+        if let Some((_, h)) = state.tunnels.remove(&id) {
+            let _ = h.shutdown.send(true);
+        }
+    }
+
     // Try SSH first, then FTP.
     if let Some(session) = state.sessions.remove(&session_id) {
         for kv in session.terminals.iter() {

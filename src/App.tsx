@@ -239,44 +239,56 @@ export default function App() {
       <div className="flex min-h-0 flex-1">
         <Sidebar />
 
-        <main className="flex min-w-0 flex-1 flex-col">
-          {view === "cloudflare" ? (
+        <main className="relative flex min-w-0 flex-1 flex-col">
+          {/* The server-tabs tree stays ALWAYS mounted — we only hide it
+              with CSS when another top-level view (Snippets / Cloudflare)
+              is active. Unmounting it would tear down every terminal's
+              shell channel + xterm scrollback and force a reconnect when
+              the user comes back. Snippets/Cloudflare hold no SSH state,
+              so they're free to mount/unmount on demand. */}
+          <div
+            className={cn(
+              "flex min-h-0 flex-1 flex-col",
+              view !== "tabs" && "hidden",
+            )}
+          >
+            <TabBar />
+            {/* Keep every session tab mounted once opened. We toggle
+                visibility with CSS instead of conditional rendering
+                so switching between servers doesn't unmount the
+                terminals / file browsers — they'd otherwise lose
+                scrollback + any in-flight work. */}
+            <div className="relative min-h-0 flex-1">
+              {tabs.length === 0 ? (
+                <EmptyState />
+              ) : (
+                tabs.map((t) => (
+                  <div
+                    key={t.session.id}
+                    className={cn(
+                      "absolute inset-0",
+                      t.session.id === activeId ? "block" : "hidden",
+                    )}
+                  >
+                    <ServerTab
+                      tab={t}
+                      isActive={t.session.id === activeId}
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {view === "cloudflare" && (
             <Suspense fallback={<LazyLoading />}>
               <CloudflarePanel />
             </Suspense>
-          ) : view === "snippets" ? (
+          )}
+          {view === "snippets" && (
             <Suspense fallback={<LazyLoading />}>
               <SnippetManager />
             </Suspense>
-          ) : (
-            <>
-              <TabBar />
-              {/* Keep every session tab mounted once opened. We toggle
-                  visibility with CSS instead of conditional rendering
-                  so switching between servers doesn't unmount the
-                  terminals / file browsers — they'd otherwise lose
-                  scrollback + any in-flight work. */}
-              <div className="relative min-h-0 flex-1">
-                {tabs.length === 0 ? (
-                  <EmptyState />
-                ) : (
-                  tabs.map((t) => (
-                    <div
-                      key={t.session.id}
-                      className={cn(
-                        "absolute inset-0",
-                        t.session.id === activeId ? "block" : "hidden",
-                      )}
-                    >
-                      <ServerTab
-                        tab={t}
-                        isActive={t.session.id === activeId}
-                      />
-                    </div>
-                  ))
-                )}
-              </div>
-            </>
           )}
         </main>
       </div>

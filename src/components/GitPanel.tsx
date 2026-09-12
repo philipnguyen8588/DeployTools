@@ -21,6 +21,10 @@ interface Props {
   projectId: string;
   sessionId: string;
   remoteBase: string;
+  /** Whether the Git tab is currently the visible BottomPanel tab. The
+   *  panel stays mounted when hidden, so we use this to auto-refresh the
+   *  file list whenever the user switches back to it. */
+  visible?: boolean;
 }
 
 type Tab = "changes" | "commits";
@@ -35,7 +39,12 @@ type Tab = "changes" | "commits";
  *                tree copy — not the historical blob) with multi-select
  *                + upload.
  */
-export function GitPanel({ projectId, sessionId, remoteBase }: Props) {
+export function GitPanel({
+  projectId,
+  sessionId,
+  remoteBase,
+  visible = true,
+}: Props) {
   const [info, setInfo] = useState<GitInfo | null>(null);
   const [tab, setTab] = useState<Tab>("changes");
 
@@ -48,9 +57,11 @@ export function GitPanel({ projectId, sessionId, remoteBase }: Props) {
     }
   }, [projectId]);
 
+  // Refresh branch/head info on mount and whenever the tab becomes
+  // visible again (the sub-views refresh their own file lists).
   useEffect(() => {
-    void refreshInfo();
-  }, [refreshInfo]);
+    if (visible) void refreshInfo();
+  }, [visible, refreshInfo]);
 
   if (!info) {
     return (
@@ -99,12 +110,14 @@ export function GitPanel({ projectId, sessionId, remoteBase }: Props) {
             projectId={projectId}
             sessionId={sessionId}
             remoteBase={remoteBase}
+            visible={visible}
           />
         ) : (
           <CommitsView
             projectId={projectId}
             sessionId={sessionId}
             remoteBase={remoteBase}
+            visible={visible}
           />
         )}
       </div>
@@ -142,10 +155,12 @@ function ChangesView({
   projectId,
   sessionId,
   remoteBase,
+  visible,
 }: {
   projectId: string;
   sessionId: string;
   remoteBase: string;
+  visible: boolean;
 }) {
   const [files, setFiles] = useState<GitFile[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -170,9 +185,11 @@ function ChangesView({
     }
   }, [projectId]);
 
+  // Refresh on mount and whenever the Git tab becomes visible again, so
+  // the changed-file list stays current without a manual reload.
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (visible) void refresh();
+  }, [visible, refresh]);
 
   const allChecked =
     files.length > 0 && files.every((f) => selected.has(f.relative_path));
@@ -191,7 +208,9 @@ function ChangesView({
           <div>The selected files will be uploaded via SFTP to the project's remote path. Existing remote copies will be overwritten.</div>
           <div className="max-h-40 overflow-y-auto rounded bg-muted px-2 py-1 font-mono text-xs">
             {uploadable.map((f) => (
-              <div key={f.relative_path}>{f.relative_path}</div>
+              <div key={f.relative_path} className="break-all">
+                {f.relative_path}
+              </div>
             ))}
           </div>
         </div>
@@ -236,13 +255,6 @@ function ChangesView({
             <Square className="h-3.5 w-3.5" />
           )}
         </button>
-        <span className="text-muted-foreground">
-          {files.length} changed · {selected.size} selected
-        </span>
-        <div className="flex-1" />
-        <Button size="sm" variant="ghost" onClick={refresh} disabled={loading}>
-          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-        </Button>
         <Button
           size="sm"
           disabled={busy || uploadable.length === 0}
@@ -250,6 +262,13 @@ function ChangesView({
         >
           <Upload className="mr-1 h-3.5 w-3.5" />
           Upload {uploadable.length > 0 ? `(${uploadable.length})` : ""}
+        </Button>
+        <span className="text-muted-foreground">
+          {files.length} changed · {selected.size} selected
+        </span>
+        <div className="flex-1" />
+        <Button size="sm" variant="ghost" onClick={refresh} disabled={loading}>
+          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
       </div>
 
@@ -284,32 +303,33 @@ function CommitsView({
   projectId,
   sessionId,
   remoteBase,
+  visible,
 }: {
   projectId: string;
   sessionId: string;
   remoteBase: string;
+  visible: boolean;
 }) {
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [loading, setLoading] = useState(true);
   const [picked, setPicked] = useState<GitCommit | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const refresh = useCallback(async () => {
     setLoading(true);
-    (async () => {
-      try {
-        const c = await api.gitLog(projectId, 100);
-        if (!cancelled) setCommits(c);
-      } catch (e) {
-        toast.error(`${e}`);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const c = await api.gitLog(projectId, 100);
+      setCommits(c);
+    } catch (e) {
+      toast.error(`${e}`);
+    } finally {
+      setLoading(false);
+    }
   }, [projectId]);
+
+  // Refresh on mount and whenever the Git tab becomes visible again.
+  useEffect(() => {
+    if (visible) void refresh();
+  }, [visible, refresh]);
 
   if (picked) {
     return (
@@ -327,7 +347,18 @@ function CommitsView({
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b bg-muted/30 p-1.5 text-xs text-muted-foreground">
         <GitCommitIcon className="h-3.5 w-3.5" />
-        {commits.length} commits · click one to see its files
+        <span className="flex-1">
+          {commits.length} commits · click one to see its files
+        </span>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          onClick={() => void refresh()}
+          disabled={loading}
+          title="Refresh"
+        >
+          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+        </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {loading ? (
@@ -425,7 +456,7 @@ function CommitFilesView({
             touched by this commit — not historical snapshots. Existing
             remote copies will be overwritten.
           </div>
-          <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+          <div className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
             {commit.short_hash} — {commit.summary}
           </div>
         </div>

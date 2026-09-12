@@ -7,6 +7,7 @@ import {
   GitBranch,
   Container,
   Cog,
+  Cable,
   Activity as ActivityIcon,
   Loader2,
   Braces,
@@ -52,6 +53,9 @@ const ServicePanel = lazy(() =>
 const MetricsPanel = lazy(() =>
   import("./MetricsPanel").then((m) => ({ default: m.MetricsPanel })),
 );
+const TunnelPanel = lazy(() =>
+  import("./TunnelPanel").then((m) => ({ default: m.TunnelPanel })),
+);
 
 interface Props {
   sessionId: string;
@@ -74,6 +78,7 @@ type TabKind =
   | "docker"
   | "services"
   | "resources"
+  | "tunnels"
   | "activity";
 
 interface BottomTab {
@@ -311,6 +316,7 @@ export function BottomPanel({
             ]
           : []),
         { kind: "resources" as const, id: "resources", label: "Resources" },
+        { kind: "tunnels" as const, id: "tunnels", label: "Tunnels" },
         { kind: "activity" as const, id: "activity", label: "Activity" },
         { kind: "services" as const, id: "services", label: "Services" },
       ]
@@ -510,6 +516,7 @@ export function BottomPanel({
               projectId={projectId}
               sessionId={sessionId}
               remoteBase={projectRemoteBase ?? "/"}
+              visible={active === "git"}
             />
           </LazyPane>
         )}
@@ -540,6 +547,11 @@ export function BottomPanel({
               sessionId={sessionId}
               active={active === "resources"}
             />
+          </LazyPane>
+        )}
+        {visited.has("tunnels") && (
+          <LazyPane visible={active === "tunnels"}>
+            <TunnelPanel sessionId={sessionId} />
           </LazyPane>
         )}
         {/* Activity mounts eagerly — cheap, and it's the FTP default. */}
@@ -683,6 +695,8 @@ function iconFor(kind: TabKind) {
       return Cog;
     case "resources":
       return ActivityIcon;
+    case "tunnels":
+      return Cable;
     case "activity":
       return ScrollText;
   }

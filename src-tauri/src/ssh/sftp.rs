@@ -335,6 +335,66 @@ pub async fn download(
     Ok(())
 }
 
+/// Download a remote path (file OR directory) to an exact local target.
+///
+/// For a file, `local_target` is the destination file path. For a
+/// directory, `local_target` is the destination directory — the tree is
+/// recreated underneath it. Returns the number of files downloaded.
+pub fn download_tree<'a>(
+    session: &'a SshSession,
+    remote_path: &'a str,
+    local_target: &'a Path,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = AppResult<u32>> + Send + 'a>> {
+    Box::pin(async move {
+        // Determine whether the remote path is a directory.
+        let is_dir = {
+            let sftp = open_sftp(session).await?;
+            let sftp = sftp.lock().await;
+            match sftp.metadata(remote_path).await {
+                Ok(attrs) => attrs.is_dir(),
+                Err(e) => {
+                    return Err(AppError::Sftp(format!("stat {remote_path}: {e}")));
+                }
+            }
+        };
+
+        if !is_dir {
+            download(session, remote_path, local_target).await?;
+            return Ok(1);
+        }
+
+        tokio::fs::create_dir_all(local_target).await?;
+
+        // Read the directory listing (fresh channel, dropped before recursion).
+        let children: Vec<(String, bool)> = {
+            let sftp = open_sftp(session).await?;
+            let sftp = sftp.lock().await;
+            let entries = sftp
+                .read_dir(remote_path)
+                .await
+                .map_err(|e| AppError::Sftp(format!("read_dir {remote_path}: {e}")))?;
+            entries
+                .into_iter()
+                .filter_map(|entry| {
+                    let name = entry.file_name();
+                    if name == "." || name == ".." {
+                        return None;
+                    }
+                    Some((name, entry.metadata().is_dir()))
+                })
+                .collect()
+        };
+
+        let mut count = 0u32;
+        for (name, _child_is_dir) in children {
+            let child_remote = format!("{}/{}", remote_path.trim_end_matches('/'), name);
+            let child_local = local_target.join(&name);
+            count += download_tree(session, &child_remote, &child_local).await?;
+        }
+        Ok(count)
+    })
+}
+
 #[derive(serde::Serialize, Clone)]
 pub struct ProgressEvent {
     pub phase: &'static str,
