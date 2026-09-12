@@ -516,6 +516,7 @@ export function BottomPanel({
               projectId={projectId}
               sessionId={sessionId}
               remoteBase={projectRemoteBase ?? "/"}
+              visible={active === "git"}
             />
           </LazyPane>
         )}

@@ -6,6 +6,7 @@ import {
   Plus,
   Play,
   Plug,
+  Loader2,
   Settings2,
   Trash2,
   ChevronRight,
@@ -90,6 +91,9 @@ export function Sidebar() {
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [groupExpanded, setGroupExpanded] = useState<Record<string, boolean>>({});
+  /** Keys (`${serverId}:${projectId ?? ""}`) whose session is currently
+   *  being opened — drives the per-row spinner + blocks double-clicks. */
+  const [connecting, setConnecting] = useState<Set<string>>(new Set());
   const [renamingGroup, setRenamingGroup] = useState<UUID | null>(null);
   const [deletingGroup, setDeletingGroup] = useState<ServerGroup | null>(null);
 
@@ -312,6 +316,10 @@ export function Sidebar() {
   // ----- Actions -----
 
   async function handleOpen(server: ServerSummary, project?: Project) {
+    const key = `${server.id}:${project?.id ?? ""}`;
+    // Ignore repeat clicks while this exact connection is in flight.
+    if (connecting.has(key)) return;
+    setConnecting((prev) => new Set(prev).add(key));
     try {
       const summary = await api.openSession(server.id, project?.id);
       openTab({
@@ -323,6 +331,12 @@ export function Sidebar() {
       setView("tabs");
     } catch (e) {
       toast.error(`Open session failed: ${e}`);
+    } finally {
+      setConnecting((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
     }
   }
 
@@ -700,6 +714,7 @@ export function Sidebar() {
                     onOpenProject={(s, p) => handleOpen(s, p)}
                     onServerMenu={openServerMenu}
                     onProjectMenu={openProjectMenu}
+                    connecting={connecting}
                   />
                 </GroupContainer>
               ))}
@@ -763,6 +778,7 @@ export function Sidebar() {
                       onOpenProject={(s, p) => handleOpen(s, p)}
                       onServerMenu={openServerMenu}
                       onProjectMenu={openProjectMenu}
+                      connecting={connecting}
                     />
                   </SortableGroup>
                 ))}
@@ -1097,6 +1113,8 @@ interface ServerListProps {
   onServerMenu: (s: ServerSummary, anchor: HTMLElement) => void;
   onProjectMenu: (p: Project, anchor: HTMLElement) => void;
   dragDisabled?: boolean;
+  /** Keys (`${serverId}:${projectId ?? ""}`) currently connecting. */
+  connecting: Set<string>;
 }
 
 function ServerList({
@@ -1109,6 +1127,7 @@ function ServerList({
   onServerMenu,
   onProjectMenu,
   dragDisabled,
+  connecting,
 }: ServerListProps) {
   const serverItemIds = servers.map((s) => `server:${s.id}`);
   if (servers.length === 0) {
@@ -1132,6 +1151,7 @@ function ServerList({
             onOpen={() => onOpenServer(s)}
             onMenu={(anchor) => onServerMenu(s, anchor)}
             dragDisabled={dragDisabled}
+            connecting={connecting.has(`${s.id}:`)}
           >
             {isOpen && (
               <div className="ml-6 mt-0.5 space-y-0.5 border-l pl-2">
@@ -1151,6 +1171,7 @@ function ServerList({
                       onOpen={() => onOpenProject(s, p)}
                       onMenu={(anchor) => onProjectMenu(p, anchor)}
                       dragDisabled={dragDisabled}
+                      connecting={connecting.has(`${s.id}:${p.id}`)}
                     />
                   ))}
                 </SortableContext>
@@ -1172,6 +1193,7 @@ interface SortableServerProps {
   onOpen: () => void;
   onMenu: (anchor: HTMLElement) => void;
   dragDisabled?: boolean;
+  connecting?: boolean;
   children: React.ReactNode;
 }
 
@@ -1182,6 +1204,7 @@ function SortableServer({
   onOpen,
   onMenu,
   dragDisabled,
+  connecting,
   children,
 }: SortableServerProps) {
   const s = server;
@@ -1241,17 +1264,29 @@ function SortableServer({
             {sub}
           </div>
         </div>
-        <div className="pointer-events-none flex shrink-0 items-center gap-0.5 self-center opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+        <div
+          className={cn(
+            "flex shrink-0 items-center gap-0.5 self-center transition-opacity",
+            connecting
+              ? "pointer-events-auto opacity-100"
+              : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100",
+          )}
+        >
           <button
-            title="Connect"
-            className="rounded p-1 hover:bg-background"
+            title={connecting ? "Connecting…" : "Connect"}
+            disabled={connecting}
+            className="rounded p-1 hover:bg-background disabled:cursor-default disabled:hover:bg-transparent"
             onClick={(e) => {
               e.stopPropagation();
               onOpen();
             }}
             onPointerDown={(e) => e.stopPropagation()}
           >
-            <Play className="h-3 w-3" />
+            {connecting ? (
+              <Loader2 className="h-3 w-3 animate-spin text-primary" />
+            ) : (
+              <Play className="h-3 w-3" />
+            )}
           </button>
           <button
             title="More actions"
@@ -1279,6 +1314,7 @@ interface SortableProjectProps {
   onOpen: () => void;
   onMenu: (anchor: HTMLElement) => void;
   dragDisabled?: boolean;
+  connecting?: boolean;
 }
 
 function SortableProject({
@@ -1286,6 +1322,7 @@ function SortableProject({
   onOpen,
   onMenu,
   dragDisabled,
+  connecting,
 }: SortableProjectProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: `project:${project.id}`, disabled: dragDisabled });
@@ -1302,9 +1339,11 @@ function SortableProject({
       tabIndex={0}
       {...(dragDisabled ? {} : (attributes as unknown as React.HTMLAttributes<HTMLDivElement>))}
       {...(dragDisabled ? {} : (listeners as unknown as Record<string, unknown>))}
-      onClick={onOpen}
+      onClick={() => {
+        if (!connecting) onOpen();
+      }}
       onKeyDown={(e) => {
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && !connecting) {
           e.preventDefault();
           onOpen();
         }
@@ -1313,17 +1352,29 @@ function SortableProject({
     >
       <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       <span className="flex-1 truncate">{project.name}</span>
-      <div className="pointer-events-none flex items-center gap-0.5 opacity-0 transition-opacity group-hover/item:pointer-events-auto group-hover/item:opacity-100">
+      <div
+        className={cn(
+          "flex items-center gap-0.5 transition-opacity",
+          connecting
+            ? "pointer-events-auto opacity-100"
+            : "pointer-events-none opacity-0 group-hover/item:pointer-events-auto group-hover/item:opacity-100",
+        )}
+      >
         <button
-          title="Connect"
-          className="rounded p-1 hover:bg-background"
+          title={connecting ? "Connecting…" : "Connect"}
+          disabled={connecting}
+          className="rounded p-1 hover:bg-background disabled:cursor-default disabled:hover:bg-transparent"
           onClick={(e) => {
             e.stopPropagation();
             onOpen();
           }}
           onPointerDown={(e) => e.stopPropagation()}
         >
-          <Play className="h-3 w-3" />
+          {connecting ? (
+            <Loader2 className="h-3 w-3 animate-spin text-primary" />
+          ) : (
+            <Play className="h-3 w-3" />
+          )}
         </button>
         <button
           title="More actions"

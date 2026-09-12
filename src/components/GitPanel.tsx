@@ -21,6 +21,10 @@ interface Props {
   projectId: string;
   sessionId: string;
   remoteBase: string;
+  /** Whether the Git tab is currently the visible BottomPanel tab. The
+   *  panel stays mounted when hidden, so we use this to auto-refresh the
+   *  file list whenever the user switches back to it. */
+  visible?: boolean;
 }
 
 type Tab = "changes" | "commits";
@@ -35,7 +39,12 @@ type Tab = "changes" | "commits";
  *                tree copy — not the historical blob) with multi-select
  *                + upload.
  */
-export function GitPanel({ projectId, sessionId, remoteBase }: Props) {
+export function GitPanel({
+  projectId,
+  sessionId,
+  remoteBase,
+  visible = true,
+}: Props) {
   const [info, setInfo] = useState<GitInfo | null>(null);
   const [tab, setTab] = useState<Tab>("changes");
 
@@ -48,9 +57,11 @@ export function GitPanel({ projectId, sessionId, remoteBase }: Props) {
     }
   }, [projectId]);
 
+  // Refresh branch/head info on mount and whenever the tab becomes
+  // visible again (the sub-views refresh their own file lists).
   useEffect(() => {
-    void refreshInfo();
-  }, [refreshInfo]);
+    if (visible) void refreshInfo();
+  }, [visible, refreshInfo]);
 
   if (!info) {
     return (
@@ -99,12 +110,14 @@ export function GitPanel({ projectId, sessionId, remoteBase }: Props) {
             projectId={projectId}
             sessionId={sessionId}
             remoteBase={remoteBase}
+            visible={visible}
           />
         ) : (
           <CommitsView
             projectId={projectId}
             sessionId={sessionId}
             remoteBase={remoteBase}
+            visible={visible}
           />
         )}
       </div>
@@ -142,10 +155,12 @@ function ChangesView({
   projectId,
   sessionId,
   remoteBase,
+  visible,
 }: {
   projectId: string;
   sessionId: string;
   remoteBase: string;
+  visible: boolean;
 }) {
   const [files, setFiles] = useState<GitFile[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -170,9 +185,11 @@ function ChangesView({
     }
   }, [projectId]);
 
+  // Refresh on mount and whenever the Git tab becomes visible again, so
+  // the changed-file list stays current without a manual reload.
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (visible) void refresh();
+  }, [visible, refresh]);
 
   const allChecked =
     files.length > 0 && files.every((f) => selected.has(f.relative_path));
@@ -284,10 +301,12 @@ function CommitsView({
   projectId,
   sessionId,
   remoteBase,
+  visible,
 }: {
   projectId: string;
   sessionId: string;
   remoteBase: string;
+  visible: boolean;
 }) {
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -305,9 +324,10 @@ function CommitsView({
     }
   }, [projectId]);
 
+  // Refresh on mount and whenever the Git tab becomes visible again.
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (visible) void refresh();
+  }, [visible, refresh]);
 
   if (picked) {
     return (
