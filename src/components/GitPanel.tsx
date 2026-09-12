@@ -255,13 +255,6 @@ function ChangesView({
             <Square className="h-3.5 w-3.5" />
           )}
         </button>
-        <span className="text-muted-foreground">
-          {files.length} changed · {selected.size} selected
-        </span>
-        <div className="flex-1" />
-        <Button size="sm" variant="ghost" onClick={refresh} disabled={loading}>
-          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-        </Button>
         <Button
           size="sm"
           disabled={busy || uploadable.length === 0}
@@ -269,6 +262,13 @@ function ChangesView({
         >
           <Upload className="mr-1 h-3.5 w-3.5" />
           Upload {uploadable.length > 0 ? `(${uploadable.length})` : ""}
+        </Button>
+        <span className="text-muted-foreground">
+          {files.length} changed · {selected.size} selected
+        </span>
+        <div className="flex-1" />
+        <Button size="sm" variant="ghost" onClick={refresh} disabled={loading}>
+          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
       </div>
 
