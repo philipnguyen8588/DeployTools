@@ -112,7 +112,7 @@ export function RemoteFileBrowser({
       description: (
         <div className="space-y-1.5">
           <div>This will overwrite the remote copy if it already exists.</div>
-          <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+          <div className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
             {selected} → {remote}
           </div>
         </div>
@@ -153,7 +153,7 @@ export function RemoteFileBrowser({
               ? "This will recursively delete the folder and everything inside it. This cannot be undone."
               : "This will delete the remote file. This cannot be undone."}
           </div>
-          <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+          <div className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
             {e.full_path}
           </div>
         </div>
@@ -222,7 +222,7 @@ export function RemoteFileBrowser({
       description: (
         <div className="space-y-1.5">
           <div>If the destination file exists, it will be overwritten.</div>
-          <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+          <div className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
             {e.full_path} → {dst}
           </div>
         </div>
@@ -250,7 +250,7 @@ export function RemoteFileBrowser({
       description: (
         <div className="space-y-1.5">
           <div>The remote file / folder will be renamed.</div>
-          <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+          <div className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
             {e.full_path} → {to}
           </div>
         </div>

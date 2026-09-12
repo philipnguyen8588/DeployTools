@@ -208,7 +208,9 @@ function ChangesView({
           <div>The selected files will be uploaded via SFTP to the project's remote path. Existing remote copies will be overwritten.</div>
           <div className="max-h-40 overflow-y-auto rounded bg-muted px-2 py-1 font-mono text-xs">
             {uploadable.map((f) => (
-              <div key={f.relative_path}>{f.relative_path}</div>
+              <div key={f.relative_path} className="break-all">
+                {f.relative_path}
+              </div>
             ))}
           </div>
         </div>
@@ -454,7 +456,7 @@ function CommitFilesView({
             touched by this commit — not historical snapshots. Existing
             remote copies will be overwritten.
           </div>
-          <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+          <div className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
             {commit.short_hash} — {commit.summary}
           </div>
         </div>

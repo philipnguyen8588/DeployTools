@@ -134,7 +134,7 @@ export function LocalFileBrowser({
           </div>
           <div className="max-h-32 overflow-y-auto rounded bg-muted px-2 py-1 font-mono text-xs">
             {targets.map((t) => (
-              <div key={t.relative_path}>
+              <div key={t.relative_path} className="break-all">
                 {t.relative_path || t.name}
                 {t.is_dir ? "/" : ""}
               </div>
@@ -183,7 +183,7 @@ export function LocalFileBrowser({
             This will {e.is_dir ? "upload every file in the folder (respecting excludes) and" : ""}
             {" "}overwrite the remote copy if it exists.
           </div>
-          <div className="rounded bg-muted px-2 py-1 font-mono text-xs">
+          <div className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
             {e.relative_path || e.name} → {mirror}
           </div>
         </div>
