@@ -59,7 +59,19 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
       {children}
       <Dialog open={!!opts} onOpenChange={(v) => !v && finish(false)}>
         {opts && (
-          <DialogContent className="max-w-md">
+          <DialogContent
+            className="max-w-md"
+            // Enter confirms from anywhere in the dialog; capture phase so
+            // it wins over the (auto-focused) Cancel button. Esc → cancel
+            // is handled by Radix's default onOpenChange(false).
+            onKeyDownCapture={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                finish(true);
+              }
+            }}
+          >
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <AlertTriangle

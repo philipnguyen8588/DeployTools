@@ -16,6 +16,11 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::Mutex;
 
+/// Clock-skew tolerance (seconds) when comparing local vs remote mtimes
+/// during sync. A same-size file is re-uploaded only if the local copy is
+/// newer than the remote by more than this margin.
+const MTIME_TOLERANCE_SECS: u64 = 2;
+
 /// Deploy a single file via SFTP.
 ///
 /// `relative_path` is relative to `project.local_path`. The corresponding
@@ -333,7 +338,21 @@ pub async fn deploy_sync(
         let needs_upload = match r {
             None => true,
             Some(r) if r.is_dir => true, // file vs dir mismatch — replace
-            Some(r) => r.size != lentry.size,
+            Some(r) => {
+                // Different size → definitely changed. Same size → only
+                // re-upload if the local copy is clearly NEWER than the
+                // remote, which catches size-preserving edits. A small
+                // tolerance absorbs clock skew between the two machines
+                // (remote mtime is set to the server's upload time).
+                if r.size != lentry.size {
+                    true
+                } else {
+                    match (lentry.mtime, r.mtime) {
+                        (Some(lm), Some(rm)) => lm > rm.saturating_add(MTIME_TOLERANCE_SECS),
+                        _ => false,
+                    }
+                }
+            }
         };
         if needs_upload {
             to_upload.push(rel.clone());
