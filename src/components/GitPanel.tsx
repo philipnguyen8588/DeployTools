@@ -86,14 +86,6 @@ export function GitPanel({
     <div className="flex h-full flex-col">
       {/* Header — branch + head */}
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
-        <GitBranch className="h-3.5 w-3.5 text-primary" />
-        <span className="font-mono font-medium">{info.branch ?? "HEAD"}</span>
-        {info.head_short && (
-          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-            {info.head_short}
-          </span>
-        )}
-        <div className="flex-1" />
         <div className="flex gap-0.5">
           <TabBtn active={tab === "changes"} onClick={() => setTab("changes")}>
             Changes
@@ -102,6 +94,14 @@ export function GitPanel({
             Commits
           </TabBtn>
         </div>
+        <GitBranch className="h-3.5 w-3.5 text-primary" />
+        <span className="font-mono font-medium">{info.branch ?? "HEAD"}</span>
+        {info.head_short && (
+          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+            {info.head_short}
+          </span>
+        )}
+        <div className="flex-1" />
       </div>
 
       <div className="min-h-0 flex-1">
@@ -263,13 +263,13 @@ function ChangesView({
           <Upload className="mr-1 h-3.5 w-3.5" />
           Upload {uploadable.length > 0 ? `(${uploadable.length})` : ""}
         </Button>
+        <Button size="sm" variant="ghost" onClick={refresh} disabled={loading} title="Refresh">
+          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+        </Button>
         <span className="text-muted-foreground">
           {files.length} changed · {selected.size} selected
         </span>
         <div className="flex-1" />
-        <Button size="sm" variant="ghost" onClick={refresh} disabled={loading}>
-          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-        </Button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -346,10 +346,6 @@ function CommitsView({
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b bg-muted/30 p-1.5 text-xs text-muted-foreground">
-        <GitCommitIcon className="h-3.5 w-3.5" />
-        <span className="flex-1">
-          {commits.length} commits · click one to see its files
-        </span>
         <Button
           size="icon-sm"
           variant="ghost"
@@ -359,6 +355,10 @@ function CommitsView({
         >
           <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
+        <GitCommitIcon className="h-3.5 w-3.5" />
+        <span className="flex-1">
+          {commits.length} commits · click one to see its files
+        </span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {loading ? (

@@ -124,7 +124,7 @@ export function RemoteFileBrowser({
     const p = toast.loading(`Uploading ${name}…`);
     try {
       await api.sftpUpload(sessionId, selected, remote);
-      toast.success("Uploaded", { id: p });
+      toast.success("Uploaded", { id: p, duration: Infinity, closeButton: true });
       await refresh();
     } catch (e) {
       toast.error(`${e}`, { id: p });
@@ -187,7 +187,7 @@ export function RemoteFileBrowser({
       if (res.skipped > 0) {
         msg += ` · skipped ${res.skipped} outside the mapped folder`;
       }
-      toast.success(msg, { id: p });
+      toast.success(msg, { id: p, duration: Infinity, closeButton: true });
     } catch (err) {
       toast.error(`${err}`, { id: p });
     }
@@ -204,7 +204,11 @@ export function RemoteFileBrowser({
       const p = toast.loading(`Downloading ${e.name}/…`);
       try {
         const n = await api.downloadTo(sessionId, e.full_path, dir);
-        toast.success(`Downloaded ${e.name}/ — ${n} files`, { id: p });
+        toast.success(`Downloaded ${e.name}/ — ${n} files`, {
+          id: p,
+          duration: Infinity,
+          closeButton: true,
+        });
       } catch (err) {
         toast.error(`${err}`, { id: p });
       }
@@ -234,7 +238,11 @@ export function RemoteFileBrowser({
     const p = toast.loading(`Downloading ${e.name}…`);
     try {
       await api.sftpDownload(sessionId, e.full_path, dst);
-      toast.success(`Saved to ${dst}`, { id: p });
+      toast.success(`Saved to ${dst}`, {
+        id: p,
+        duration: Infinity,
+        closeButton: true,
+      });
     } catch (err) {
       toast.error(`${err}`, { id: p });
     }

@@ -9,6 +9,8 @@ import {
   Copy,
   FolderGit2,
   FolderOpen,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -52,6 +54,8 @@ export function LocalFileBrowser({
   const [selection, setSelection] = useState<LocalEntry | null>(null);
   /** Multi-selection for batch upload — keyed by relative_path. */
   const [checked, setChecked] = useState<Set<string>>(new Set());
+  /** Whether excluded (dimmed) entries are shown in the list. */
+  const [showExcluded, setShowExcluded] = useState(true);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [compareFor, setCompareFor] = useState<string | null>(null);
   const [compareFolderFor, setCompareFolderFor] = useState<string | null>(null);
@@ -89,11 +93,14 @@ export function LocalFileBrowser({
     });
   }
 
+  // Entries actually rendered — optionally hiding excluded ones.
+  const shown = showExcluded ? entries : entries.filter((e) => !e.excluded);
+
   function toggleAll() {
     setChecked((prev) =>
-      prev.size === entries.length
+      prev.size === shown.length
         ? new Set()
-        : new Set(entries.map((e) => e.relative_path)),
+        : new Set(shown.map((e) => e.relative_path)),
     );
   }
 
@@ -159,6 +166,8 @@ export function LocalFileBrowser({
       }
       toast.success(`Uploaded ${targets.length} item(s) — ${files} files`, {
         id: p,
+        duration: Infinity,
+        closeButton: true,
       });
       setChecked(new Set());
     } catch (err) {
@@ -196,10 +205,18 @@ export function LocalFileBrowser({
     try {
       if (e.is_dir) {
         const n = await api.deployFolder(projectId, e.relative_path, sessionId);
-        toast.success(`Uploaded ${e.name}/ — ${n} files`, { id: p });
+        toast.success(`Uploaded ${e.name}/ — ${n} files`, {
+          id: p,
+          duration: Infinity,
+          closeButton: true,
+        });
       } else {
         await api.deployFile(projectId, e.relative_path, sessionId);
-        toast.success(`Uploaded ${e.name}`, { id: p });
+        toast.success(`Uploaded ${e.name}`, {
+          id: p,
+          duration: Infinity,
+          closeButton: true,
+        });
       }
     } catch (err) {
       toast.error(`${err}`, { id: p });
@@ -280,6 +297,18 @@ export function LocalFileBrowser({
         <Button size="icon-sm" variant="ghost" onClick={refresh} title="Refresh">
           <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          onClick={() => setShowExcluded((v) => !v)}
+          title={showExcluded ? "Hide excluded files" : "Show excluded files"}
+        >
+          {showExcluded ? (
+            <Eye className="h-3.5 w-3.5" />
+          ) : (
+            <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
+          )}
+        </Button>
         <Input
           value={relativePath || "/"}
           readOnly
@@ -316,11 +345,11 @@ export function LocalFileBrowser({
                 <input
                   type="checkbox"
                   className="cursor-pointer align-middle accent-primary"
-                  checked={entries.length > 0 && checked.size === entries.length}
+                  checked={shown.length > 0 && checked.size === shown.length}
                   ref={(el) => {
                     if (el)
                       el.indeterminate =
-                        checked.size > 0 && checked.size < entries.length;
+                        checked.size > 0 && checked.size < shown.length;
                   }}
                   onChange={toggleAll}
                   title="Select all"
@@ -332,7 +361,7 @@ export function LocalFileBrowser({
             </tr>
           </thead>
           <tbody>
-            {entries.map((e) => (
+            {shown.map((e) => (
               <tr
                 key={e.relative_path}
                 onClick={() => setSelection(e)}
@@ -389,9 +418,11 @@ export function LocalFileBrowser({
             ))}
           </tbody>
         </table>
-        {entries.length === 0 && !loading && (
+        {shown.length === 0 && !loading && (
           <div className="p-8 text-center text-xs text-muted-foreground">
-            Empty directory
+            {entries.length === 0
+              ? "Empty directory"
+              : "All entries here are excluded — toggle the eye icon to show them."}
           </div>
         )}
       </div>
