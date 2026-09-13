@@ -136,11 +136,13 @@ export const deployFolder = (
   projectId: UUID,
   relativePath: string,
   sessionId?: string | null,
+  jobId?: string | null,
 ) =>
   invoke<number>("deploy_folder", {
     projectId,
     relativePath,
     sessionId: sessionId ?? null,
+    jobId: jobId ?? null,
   });
 export const deployRsync = (projectId: UUID, dryRun: boolean) =>
   invoke<number>("deploy_rsync", { projectId, dryRun });
@@ -148,21 +150,26 @@ export const deploySync = (
   projectId: UUID,
   sessionId: string | null,
   deleteExtraneous: boolean,
+  jobId?: string | null,
 ) =>
   invoke<{ uploaded: number; deleted: number; unchanged: number }>(
     "deploy_sync",
-    { projectId, sessionId, deleteExtraneous },
+    { projectId, sessionId, deleteExtraneous, jobId: jobId ?? null },
   );
 export const downloadToMapped = (
   projectId: UUID,
   sessionId: string,
   remotePaths: string[],
+  jobId?: string | null,
 ) =>
   invoke<{ downloaded: number; skipped: number }>("download_to_mapped", {
     projectId,
     sessionId,
     remotePaths,
+    jobId: jobId ?? null,
   });
+export const cancelDeploy = (jobId: string) =>
+  invoke<void>("cancel_deploy", { jobId });
 export const downloadTo = (
   sessionId: string,
   remotePath: string,

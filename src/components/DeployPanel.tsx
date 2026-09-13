@@ -16,6 +16,7 @@ import { useSessions } from "@/stores/sessions";
 import { Button } from "./ui/button";
 import { ContextMenu, type ContextMenuItem } from "./ui/context-menu";
 import { useConfirm } from "./ConfirmDialog";
+import { runDeployJob } from "@/lib/deployJob";
 import { IdeIcon } from "./IdeIcon";
 
 interface Props {
@@ -134,15 +135,19 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
     if (!ok) return;
 
     setRunning(true);
-    const id = toast.loading(`Sync${deleteExtraneous ? " + delete" : ""}…`);
     try {
-      const s = await api.deploySync(projectId, sessionId ?? null, deleteExtraneous);
-      toast.success(
-        `✓ ${s.uploaded} uploaded · ${s.deleted} deleted · ${s.unchanged} unchanged`,
-        { id, duration: Infinity, closeButton: true },
+      await runDeployJob(
+        `Sync${deleteExtraneous ? " + delete" : ""}`,
+        async ({ jobId }) => {
+          const s = await api.deploySync(
+            projectId,
+            sessionId ?? null,
+            deleteExtraneous,
+            jobId,
+          );
+          return `✓ ${s.uploaded} uploaded · ${s.deleted} deleted · ${s.unchanged} unchanged`;
+        },
       );
-    } catch (e) {
-      toast.error(`${e}`, { id });
     } finally {
       setRunning(false);
     }

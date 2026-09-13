@@ -42,6 +42,11 @@ pub struct AppState {
 
     /// Active SSH local-forward tunnels, keyed by tunnel id.
     pub tunnels: Arc<DashMap<String, crate::commands::tunnel::TunnelHandle>>,
+
+    /// Cancellation flags for in-flight deploy jobs (sync / folder upload /
+    /// batch download), keyed by a frontend-generated job id. Set to true
+    /// by `cancel_deploy` and polled inside the transfer loops.
+    pub deploy_cancels: Arc<DashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl AppState {
@@ -60,6 +65,7 @@ impl AppState {
             inflight: Arc::new(DashMap::new()),
             follow_cancellers: Arc::new(DashMap::new()),
             tunnels: Arc::new(DashMap::new()),
+            deploy_cancels: Arc::new(DashMap::new()),
         }
     }
 

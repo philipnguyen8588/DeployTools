@@ -23,6 +23,7 @@ import { ContextMenu, type ContextMenuItem } from "./ui/context-menu";
 import { CompareDialog } from "./CompareDialog";
 import { CompareFolderDialog } from "./CompareFolderDialog";
 import { useConfirm } from "./ConfirmDialog";
+import { runDeployJob } from "@/lib/deployJob";
 
 interface Props {
   sessionId: string;
@@ -153,26 +154,27 @@ export function LocalFileBrowser({
     });
     if (!ok) return;
 
-    const p = toast.loading(`Uploading ${targets.length} item(s)…`);
-    let files = 0;
-    try {
+    await runDeployJob(`Uploading ${targets.length} item(s)`, async ({ jobId, cancelled }) => {
+      let files = 0;
+      let items = 0;
       for (const t of targets) {
+        if (cancelled()) break;
         if (t.is_dir) {
-          files += await api.deployFolder(projectId, t.relative_path, sessionId);
+          files += await api.deployFolder(
+            projectId,
+            t.relative_path,
+            sessionId,
+            jobId,
+          );
         } else {
           await api.deployFile(projectId, t.relative_path, sessionId);
           files += 1;
         }
+        items += 1;
       }
-      toast.success(`Uploaded ${targets.length} item(s) — ${files} files`, {
-        id: p,
-        duration: Infinity,
-        closeButton: true,
-      });
       setChecked(new Set());
-    } catch (err) {
-      toast.error(`${err}`, { id: p });
-    }
+      return `Uploaded ${items} item(s) — ${files} files`;
+    });
   }
 
   function cdUp() {
@@ -201,23 +203,28 @@ export function LocalFileBrowser({
     });
     if (!ok) return;
 
-    const p = toast.loading(`Uploading ${e.name}${e.is_dir ? "/" : ""}…`);
+    if (e.is_dir) {
+      // Folder upload can be long — run it with a progress + cancel toast.
+      await runDeployJob(`Upload ${e.name}/`, async ({ jobId }) => {
+        const n = await api.deployFolder(
+          projectId,
+          e.relative_path,
+          sessionId,
+          jobId,
+        );
+        return `Uploaded ${e.name}/ — ${n} files`;
+      });
+      return;
+    }
+
+    const p = toast.loading(`Uploading ${e.name}…`);
     try {
-      if (e.is_dir) {
-        const n = await api.deployFolder(projectId, e.relative_path, sessionId);
-        toast.success(`Uploaded ${e.name}/ — ${n} files`, {
-          id: p,
-          duration: Infinity,
-          closeButton: true,
-        });
-      } else {
-        await api.deployFile(projectId, e.relative_path, sessionId);
-        toast.success(`Uploaded ${e.name}`, {
-          id: p,
-          duration: Infinity,
-          closeButton: true,
-        });
-      }
+      await api.deployFile(projectId, e.relative_path, sessionId);
+      toast.success(`Uploaded ${e.name}`, {
+        id: p,
+        duration: Infinity,
+        closeButton: true,
+      });
     } catch (err) {
       toast.error(`${err}`, { id: p });
     }

@@ -12,14 +12,85 @@ use crate::models::{Project, Server};
 use crate::rsync::runner::{self, RsyncOptions};
 use crate::ssh::{client, sftp, session_pool::SshSession};
 use crate::state::AppState;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
+use tauri::Emitter;
 use tokio::sync::Mutex;
 
 /// Clock-skew tolerance (seconds) when comparing local vs remote mtimes
-/// during sync. A same-size file is re-uploaded only if the local copy is
-/// newer than the remote by more than this margin.
+/// during sync. A file is re-uploaded when sizes differ, or when the
+/// local and remote mtimes differ by more than this margin.
 const MTIME_TOLERANCE_SECS: u64 = 2;
+
+/// Progress payload emitted on `deploy-progress://{job_id}` as files are
+/// transferred, so the UI can render "done / total".
+#[derive(Serialize, Clone)]
+struct DeployProgress {
+    done: u32,
+    total: u32,
+    name: String,
+}
+
+fn emit_progress(
+    app: &tauri::AppHandle,
+    job_id: &Option<String>,
+    done: u32,
+    total: u32,
+    name: &str,
+) {
+    if let Some(jid) = job_id {
+        let _ = app.emit(
+            &format!("deploy-progress://{jid}"),
+            DeployProgress {
+                done,
+                total,
+                name: name.to_string(),
+            },
+        );
+    }
+}
+
+/// Registers a cancel flag for a deploy job and removes it on drop.
+struct CancelGuard<'a> {
+    state: &'a AppState,
+    job_id: Option<String>,
+    token: Arc<AtomicBool>,
+}
+
+impl<'a> CancelGuard<'a> {
+    fn new(state: &'a AppState, job_id: Option<String>) -> Self {
+        let token = Arc::new(AtomicBool::new(false));
+        if let Some(jid) = &job_id {
+            state.deploy_cancels.insert(jid.clone(), token.clone());
+        }
+        Self {
+            state,
+            job_id,
+            token,
+        }
+    }
+    fn cancelled(&self) -> bool {
+        self.token.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for CancelGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(jid) = &self.job_id {
+            self.state.deploy_cancels.remove(jid);
+        }
+    }
+}
+
+/// Cancel an in-flight deploy job (sync / folder upload / batch download).
+#[tauri::command]
+pub async fn cancel_deploy(job_id: String, state: State<'_, AppState>) -> AppResult<()> {
+    if let Some(t) = state.deploy_cancels.get(&job_id) {
+        t.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
 
 /// Deploy a single file via SFTP.
 ///
@@ -69,6 +140,7 @@ pub async fn deploy_folder(
     project_id: Uuid,
     relative_path: String,
     session_id: Option<String>,
+    job_id: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<u32> {
     let (project, server) = resolve_project_server(&state, project_id).await?;
@@ -126,8 +198,19 @@ pub async fn deploy_folder(
     );
 
     // Upload each file, creating parent dirs as needed (mkdir -p is cheap).
+    let cancel = CancelGuard::new(state.inner(), job_id.clone());
+    let total = files.len() as u32;
     let mut uploaded: u32 = 0;
     for rel in &files {
+        if cancel.cancelled() {
+            crate::ssh::activity::warn(
+                &state.app,
+                "sftp",
+                format!("folder upload cancelled after {uploaded}/{total} files"),
+                Some(&session.id),
+            );
+            break;
+        }
         let local_full = canon_local_root.join(rel);
         let remote_full = if remote_root.is_empty() {
             rel.clone()
@@ -144,6 +227,7 @@ pub async fn deploy_folder(
             return Err(e);
         }
         uploaded += 1;
+        emit_progress(&state.app, &job_id, uploaded, total, rel);
     }
 
     crate::ssh::activity::success(
@@ -209,16 +293,29 @@ pub async fn download_to_mapped(
     project_id: Uuid,
     session_id: String,
     remote_paths: Vec<String>,
+    job_id: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<DownloadStats> {
     let (project, _) = resolve_project_server(&state, project_id).await?;
     let session = state.sessions.get(&session_id)?;
 
     let base = project.remote_path.trim_end_matches('/').to_string();
+    let cancel = CancelGuard::new(state.inner(), job_id.clone());
+    let total = remote_paths.len() as u32;
+    let mut done = 0u32;
     let mut downloaded = 0u32;
     let mut skipped = 0u32;
 
     for remote in &remote_paths {
+        if cancel.cancelled() {
+            crate::ssh::activity::warn(
+                &state.app,
+                "sftp",
+                format!("download cancelled after {done}/{total} items"),
+                Some(&session.id),
+            );
+            break;
+        }
         crate::ssh::sftp::validate_remote_path(remote)?;
         let trimmed = remote.trim_end_matches('/');
 
@@ -247,6 +344,8 @@ pub async fn download_to_mapped(
         };
 
         downloaded += crate::ssh::sftp::download_tree(&session, remote, &local_target).await?;
+        done += 1;
+        emit_progress(&state.app, &job_id, done, total, remote);
     }
 
     Ok(DownloadStats {
@@ -283,6 +382,7 @@ pub async fn deploy_sync(
     project_id: Uuid,
     session_id: Option<String>,
     delete_extraneous: bool,
+    job_id: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<SyncStats> {
     let (project, server) = resolve_project_server(&state, project_id).await?;
@@ -347,8 +447,15 @@ pub async fn deploy_sync(
                 if r.size != lentry.size {
                     true
                 } else {
+                    // Same size — re-upload only if the mtimes differ by
+                    // more than the tolerance. Because upload() stamps the
+                    // local mtime onto the remote, unchanged files match
+                    // and are skipped, while size-preserving edits (which
+                    // bump the local mtime) are caught.
                     match (lentry.mtime, r.mtime) {
-                        (Some(lm), Some(rm)) => lm > rm.saturating_add(MTIME_TOLERANCE_SECS),
+                        (Some(lm), Some(rm)) => {
+                            (lm as i64 - rm as i64).abs() > MTIME_TOLERANCE_SECS as i64
+                        }
                         _ => false,
                     }
                 }
@@ -389,8 +496,15 @@ pub async fn deploy_sync(
     );
 
     // Execute upload
+    let cancel = CancelGuard::new(state.inner(), job_id.clone());
+    let total = (to_upload.len() + to_delete.len()) as u32;
     let mut uploaded = 0u32;
+    let mut cancelled = false;
     for rel in &to_upload {
+        if cancel.cancelled() {
+            cancelled = true;
+            break;
+        }
         let local_full = canon_root.join(rel);
         let remote_full = format!("{}/{}", remote_root, rel);
         if let Err(e) = crate::ssh::sftp::upload(&session, &local_full, &remote_full).await {
@@ -403,11 +517,16 @@ pub async fn deploy_sync(
             return Err(e);
         }
         uploaded += 1;
+        emit_progress(&state.app, &job_id, uploaded, total, rel);
     }
 
     // Execute delete
     let mut deleted = 0u32;
     for (rel, is_dir) in &to_delete {
+        if cancelled || cancel.cancelled() {
+            cancelled = true;
+            break;
+        }
         let remote_full = format!("{}/{}", remote_root, rel);
         if let Err(e) = crate::ssh::sftp::remove(&session, &remote_full, *is_dir).await {
             crate::ssh::activity::warn(
@@ -418,18 +537,28 @@ pub async fn deploy_sync(
             );
         } else {
             deleted += 1;
+            emit_progress(&state.app, &job_id, uploaded + deleted, total, rel);
         }
     }
 
-    crate::ssh::activity::success(
-        &state.app,
-        "sync",
-        format!(
-            "✓ sync done — {uploaded} uploaded, {deleted} deleted, {} unchanged",
-            local_map.len() - uploaded as usize
-        ),
-        Some(&sid),
-    );
+    if cancelled {
+        crate::ssh::activity::warn(
+            &state.app,
+            "sync",
+            format!("sync cancelled — {uploaded} uploaded, {deleted} deleted so far"),
+            Some(&sid),
+        );
+    } else {
+        crate::ssh::activity::success(
+            &state.app,
+            "sync",
+            format!(
+                "✓ sync done — {uploaded} uploaded, {deleted} deleted, {} unchanged",
+                local_map.len() - uploaded as usize
+            ),
+            Some(&sid),
+        );
+    }
 
     Ok(SyncStats {
         uploaded,

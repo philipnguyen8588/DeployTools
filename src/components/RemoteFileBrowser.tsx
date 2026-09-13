@@ -25,6 +25,7 @@ import { CompareDialog } from "./CompareDialog";
 import { CompareFolderDialog } from "./CompareFolderDialog";
 import { FolderGit2 } from "lucide-react";
 import { useConfirm } from "./ConfirmDialog";
+import { runDeployJob } from "@/lib/deployJob";
 
 interface Props {
   sessionId: string;
@@ -180,17 +181,14 @@ export function RemoteFileBrowser({
       return;
     }
     if (paths.length === 0) return;
-    const p = toast.loading(`Downloading ${paths.length} item(s)…`);
-    try {
-      const res = await api.downloadToMapped(projectId, sessionId, paths);
+    await runDeployJob(`Downloading ${paths.length} item(s)`, async ({ jobId }) => {
+      const res = await api.downloadToMapped(projectId, sessionId, paths, jobId);
       let msg = `Downloaded ${res.downloaded} file(s)`;
       if (res.skipped > 0) {
         msg += ` · skipped ${res.skipped} outside the mapped folder`;
       }
-      toast.success(msg, { id: p, duration: Infinity, closeButton: true });
-    } catch (err) {
-      toast.error(`${err}`, { id: p });
-    }
+      return msg;
+    });
   }
 
   /** Download a single entry to a location the user picks in a dialog. */
