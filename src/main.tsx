@@ -22,15 +22,6 @@ document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
 });
 
-// macOS-only: mark the root so we can round the window corners in the
-// current macOS style. The window itself is transparent on macOS (see
-// tauri.macos.conf.json); this class clips the opaque app shell so the
-// four corners show the desktop through them. Detected from the WebView
-// user agent — same heuristic the title bar uses for traffic lights.
-if (typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent)) {
-  document.documentElement.classList.add("is-mac");
-}
-
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ThemeProvider

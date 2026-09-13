@@ -85,22 +85,6 @@
   }
 }
 
-/* macOS: give the window rounded corners in the current macOS style.
-   The native window is transparent (see tauri.macos.conf.json), so we
-   let the desktop show through the four corners by clipping the opaque
-   app shell (#root) to a rounded rectangle. `.is-mac` is added to
-   <html> at startup only on macOS, so Windows/Linux are untouched
-   (Windows 11 already rounds top-level windows itself). */
-html.is-mac,
-html.is-mac body {
-  background: transparent !important;
-}
-html.is-mac #root {
-  border-radius: 10px;
-  overflow: hidden;
-  background: hsl(var(--background));
-}
-
 /* xterm.js overrides — fit the terminal to the surrounding container */
 .xterm {
   padding: 8px;

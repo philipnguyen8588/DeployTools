@@ -57,10 +57,12 @@ pub fn run() {
             // Belt-and-suspenders: force the native title bar off after the
             // window-state plugin has restored. Guarantees no native macOS
             // chrome even if a stale decorations=true was saved previously.
+            // Also round the window corners in the current macOS style.
             #[cfg(target_os = "macos")]
             {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.set_decorations(false);
+                    apply_macos_rounded_corners(&window);
                 }
             }
 
@@ -179,4 +181,49 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Give the frameless macOS window rounded corners in the current macOS
+/// style, using only public AppKit APIs (App Store safe — no private API,
+/// no `transparent: true`).
+///
+/// We make the `NSWindow` non-opaque with a clear background so the four
+/// corners can show the desktop, then clip the content view's layer to a
+/// rounded rectangle. `masksToBounds` makes the WKWebView subview follow
+/// the same rounded shape. This avoids the over-rounded look that macOS 26
+/// (Tahoe) applies to Tauri's private-API transparent windows.
+#[cfg(target_os = "macos")]
+fn apply_macos_rounded_corners(window: &tauri::WebviewWindow) {
+    use cocoa::base::{id, nil, NO, YES};
+    use objc::{class, msg_send, sel, sel_impl};
+
+    // Content corner radius in points. Kept modest so it reads as a
+    // native window, not the exaggerated Tahoe toolbar radius.
+    const RADIUS: f64 = 10.0;
+
+    let ns_window = match window.ns_window() {
+        Ok(w) => w as id,
+        Err(_) => return,
+    };
+
+    unsafe {
+        // Transparent window background via PUBLIC API so the corners
+        // outside the rounded content are see-through.
+        let _: () = msg_send![ns_window, setOpaque: NO];
+        let clear: id = msg_send![class!(NSColor), clearColor];
+        let _: () = msg_send![ns_window, setBackgroundColor: clear];
+        let _: () = msg_send![ns_window, setHasShadow: YES];
+
+        // Clip the content view (and its WKWebView subview) to a rounded
+        // rectangle.
+        let content: id = msg_send![ns_window, contentView];
+        if content != nil {
+            let _: () = msg_send![content, setWantsLayer: YES];
+            let layer: id = msg_send![content, layer];
+            if layer != nil {
+                let _: () = msg_send![layer, setCornerRadius: RADIUS];
+                let _: () = msg_send![layer, setMasksToBounds: YES];
+            }
+        }
+    }
 }

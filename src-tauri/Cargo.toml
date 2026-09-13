@@ -14,9 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.0.3", features = [] }
 
 [dependencies]
-# `macos-private-api` is required for transparent windows on macOS (used
-# to give the window rounded corners). It's a no-op on Windows/Linux.
-tauri = { version = "2.1.1", features = ["macos-private-api"] }
+tauri = { version = "2.1.1", features = [] }
 tauri-plugin-dialog = "2.0.3"
 tauri-plugin-fs = "2.0.3"
 # Persists window position / size / maximize state between launches.
@@ -82,6 +80,12 @@ git2 = { version = "0.19", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
 serde_yaml = "0.9"
 suppaftp = { version = "6", features = ["async"] }
+
+# macOS-only: used to give the frameless window native rounded corners
+# via CALayer (public AppKit APIs). Not compiled on Windows/Linux.
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
