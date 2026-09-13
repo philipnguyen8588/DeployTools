@@ -498,10 +498,6 @@ function CommitFilesView({
             <Square className="h-3.5 w-3.5" />
           )}
         </button>
-        <span className="truncate font-mono text-muted-foreground">
-          {commit.short_hash} · {files.length} files · {selected.size} selected
-        </span>
-        <div className="flex-1" />
         <Button
           size="sm"
           disabled={busy || uploadable.length === 0}
@@ -510,6 +506,10 @@ function CommitFilesView({
           <Upload className="mr-1 h-3.5 w-3.5" />
           Upload {uploadable.length > 0 ? `(${uploadable.length})` : ""}
         </Button>
+        <span className="truncate font-mono text-muted-foreground">
+          {commit.short_hash} · {files.length} files · {selected.size} selected
+        </span>
+        <div className="flex-1" />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
