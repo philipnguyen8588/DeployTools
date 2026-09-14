@@ -419,7 +419,21 @@ pub async fn deploy_sync(
         walk_remote(&sftp, &remote_root, "", &mut remote_map).await?;
     }
 
-    // Decide actions
+    // Decide actions.
+    //
+    // Change detection: a different byte size always means changed. When
+    // the size matches the remote we fall back to a CONTENT HASH compared
+    // against a local manifest — this catches same-size edits without ever
+    // reading/writing remote metadata (so the upload path is untouched and
+    // the old 0-byte bug can't recur). First time we see a same-size file
+    // (no manifest entry) we assume it's in sync and just seed the hash,
+    // avoiding a mass re-upload on the first sync after upgrading.
+    let manifest = crate::syncstate::read(&state.app, project.id);
+    let mut new_manifest: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut upload_hash: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
     let mut to_upload: Vec<String> = Vec::new();
     let mut dirs_to_ensure: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
@@ -430,16 +444,39 @@ pub async fn deploy_sync(
             continue;
         }
         let r = remote_map.get(rel);
-        // Compare by byte size only. This is the long-stable behaviour:
-        // safe and never mutates remote metadata. Same-size content edits
-        // aren't caught here — use git-based upload (`upload_changed_files`)
-        // for precise content-aware uploads.
+        let local_full = canon_root.join(rel);
         let needs_upload = match r {
             None => true,
-            Some(r) if r.is_dir => true, // file vs dir mismatch — replace
-            Some(r) => r.size != lentry.size,
+            Some(r) if r.is_dir => true,       // file vs dir mismatch — replace
+            Some(r) if r.size != lentry.size => true, // size differs — changed
+            Some(_) => {
+                // Same size — compare content hash to the manifest.
+                match crate::syncstate::hash_file(&local_full) {
+                    Some(h) => match manifest.get(rel) {
+                        Some(m) if *m == h => {
+                            new_manifest.insert(rel.clone(), h);
+                            false
+                        }
+                        None => {
+                            // First run for this file — seed, assume in sync.
+                            new_manifest.insert(rel.clone(), h);
+                            false
+                        }
+                        Some(_) => {
+                            upload_hash.insert(rel.clone(), h);
+                            true
+                        }
+                    },
+                    None => true, // can't hash → upload to be safe
+                }
+            }
         };
         if needs_upload {
+            if !upload_hash.contains_key(rel) {
+                if let Some(h) = crate::syncstate::hash_file(&local_full) {
+                    upload_hash.insert(rel.clone(), h);
+                }
+            }
             to_upload.push(rel.clone());
         }
     }
@@ -495,8 +532,15 @@ pub async fn deploy_sync(
             return Err(e);
         }
         uploaded += 1;
+        // Record the content hash now that the file is safely on the server.
+        if let Some(h) = upload_hash.get(rel) {
+            new_manifest.insert(rel.clone(), h.clone());
+        }
         emit_progress(&state.app, &job_id, uploaded, total, rel);
     }
+
+    // Persist the manifest (skipped/seeded + successfully uploaded files).
+    let _ = crate::syncstate::write(&state.app, project.id, &new_manifest);
 
     // Execute delete
     let mut deleted = 0u32;
@@ -560,15 +604,102 @@ pub async fn deploy_rsync(
     state: State<'_, AppState>,
 ) -> AppResult<i32> {
     let (project, server) = resolve_project_server(&state, project_id).await?;
+    // Preserve the project's configured delete behaviour.
+    let delete = project
+        .rsync_flags
+        .split_whitespace()
+        .any(|t| t == "--delete" || t == "--del" || t.starts_with("--delete-"));
     runner::run(
         &state.app,
         RsyncOptions {
             project: &project,
             server: &server,
             dry_run,
+            delete,
         },
     )
     .await
+}
+
+/// Result of a smart sync — tells the UI which engine ran.
+#[derive(Serialize, Clone)]
+pub struct SmartSyncResult {
+    /// "rsync" or "sftp".
+    pub engine: String,
+    pub summary: String,
+}
+
+/// Sync a project preferring rsync (fast, delta-transfer, catches same-size
+/// edits) when it's usable — the server uses key-file auth AND has rsync —
+/// otherwise falls back to the native SFTP sync (hash-based, so it also
+/// catches same-size edits). `delete_extraneous` maps to rsync `--delete` /
+/// the SFTP delete pass.
+#[tauri::command]
+pub async fn deploy_smart_sync(
+    project_id: Uuid,
+    session_id: Option<String>,
+    delete_extraneous: bool,
+    job_id: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<SmartSyncResult> {
+    let (project, server) = resolve_project_server(&state, project_id).await?;
+
+    // rsync only works with a key FILE (not inline PEM, not password).
+    let key_file_auth = matches!(
+        &server.auth,
+        crate::models::AuthMethod::PrivateKey { key_path, .. }
+            if !key_path.trim_start().starts_with("-----BEGIN")
+    );
+
+    // ...and the server must actually have rsync. Probe over the live
+    // session (no extra connection); skip rsync if there's no session.
+    let mut use_rsync = false;
+    if key_file_auth {
+        if let Some(id) = &session_id {
+            if let Ok(sess) = state.sessions.get(id) {
+                let argv = vec!["rsync".to_string(), "--version".to_string()];
+                use_rsync = crate::ssh::exec::run_capturing(sess, None, &argv, 8192)
+                    .await
+                    .map(|(_, _, code)| code == 0)
+                    .unwrap_or(false);
+            }
+        }
+    }
+
+    if use_rsync {
+        crate::ssh::activity::info(
+            &state.app,
+            "sync",
+            "using rsync engine".to_string(),
+            session_id.as_deref(),
+        );
+        runner::run(
+            &state.app,
+            RsyncOptions {
+                project: &project,
+                server: &server,
+                dry_run: false,
+                delete: delete_extraneous,
+            },
+        )
+        .await?;
+        Ok(SmartSyncResult {
+            engine: "rsync".to_string(),
+            summary: format!(
+                "Synced via rsync{}",
+                if delete_extraneous { " (+delete)" } else { "" }
+            ),
+        })
+    } else {
+        let stats = deploy_sync(project_id, session_id, delete_extraneous, job_id, state).await?;
+        Ok(SmartSyncResult {
+            engine: "sftp".to_string(),
+            summary: format!(
+                "{} uploaded · {} deleted · {} unchanged",
+                stats.uploaded, stats.deleted, stats.unchanged
+            ),
+        })
+    }
 }
 
 #[derive(Serialize, Clone)]

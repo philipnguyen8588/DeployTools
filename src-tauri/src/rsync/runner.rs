@@ -106,6 +106,10 @@ pub struct RsyncOptions<'a> {
     pub server: &'a Server,
     /// If true, pass `--dry-run`.
     pub dry_run: bool,
+    /// Whether to delete remote files not present locally. When true we
+    /// ensure `--delete` is present; when false we strip it — so the same
+    /// project flags drive both the "Sync" and "Sync + delete" buttons.
+    pub delete: bool,
 }
 
 /// Run rsync. Returns exit code (0 on success). Streams output via
@@ -116,6 +120,7 @@ pub async fn run(app: &AppHandle, opts: RsyncOptions<'_>) -> AppResult<i32> {
         project,
         server,
         dry_run,
+        delete,
     } = opts;
 
     let event = format!("rsync-log://{}", project.id);
@@ -150,13 +155,18 @@ pub async fn run(app: &AppHandle, opts: RsyncOptions<'_>) -> AppResult<i32> {
 
     // --- Assemble argv ---
     let mut args: Vec<String> = Vec::new();
-    // Split user-configured flags (default "-avz --delete") safely on whitespace.
-    args.extend(
-        project
-            .rsync_flags
-            .split_whitespace()
-            .map(|s| s.to_string()),
-    );
+    // Split user-configured flags (default "-avz --delete") safely on
+    // whitespace, stripping any delete variant — the caller decides via
+    // `delete` whether remote extras are removed.
+    for tok in project.rsync_flags.split_whitespace() {
+        if tok == "--del" || tok == "--delete" || tok.starts_with("--delete-") {
+            continue;
+        }
+        args.push(tok.to_string());
+    }
+    if delete {
+        args.push("--delete".to_string());
+    }
     if dry_run {
         args.push("--dry-run".to_string());
     }

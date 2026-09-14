@@ -40,6 +40,17 @@ pub fn list() -> Value {
             ),
         ),
         tool(
+            "upload_files",
+            "Upload one or more specific local files to their mapped remote location (project.local_path -> project.remote_path). Paths are relative to the project's local root.",
+            schema(
+                json!({
+                    "project": { "type": "string", "description": "Project name" },
+                    "files": { "type": "array", "items": { "type": "string" }, "description": "Project-relative file paths to upload (e.g. src/app.js)" }
+                }),
+                &["project", "files"],
+            ),
+        ),
+        tool(
             "sync",
             "Upload every new or changed file to the server (native SFTP sync, no deletion). Files matching the project's exclude patterns are NEVER uploaded, so excluded files (e.g. .env) are not overwritten on the server. Use list_excludes to see the patterns.",
             project_only.clone(),
@@ -123,6 +134,7 @@ fn is_action(tool: &str) -> bool {
         "connect_project"
             | "disconnect_project"
             | "upload_changed_files"
+            | "upload_files"
             | "sync"
             | "sync_and_delete"
             | "upload_commit_files"
@@ -180,6 +192,14 @@ async fn dispatch(app: &AppHandle, name: &str, args: Value) -> AppResult<String>
         "command_policy" => command_policy(app).await,
         "upload_changed_files" => {
             upload_changed(app, &arg_str(&args, "project")?, arg_list(&args, "files")).await
+        }
+        "upload_files" => {
+            upload_paths(
+                app,
+                &arg_str(&args, "project")?,
+                arg_list(&args, "files").unwrap_or_default(),
+            )
+            .await
         }
         "sync" => sync(app, &arg_str(&args, "project")?, false).await,
         "sync_and_delete" => sync(app, &arg_str(&args, "project")?, true).await,
@@ -337,6 +357,38 @@ async fn upload_changed(
     let (project, sid) = ensure_session(app, project_name).await?;
     let files = crate::commands::git::git_status(project.id, app.state()).await?;
     upload_files(app, &project, &sid, files, subset).await
+}
+
+/// Upload explicit project-relative paths to their mapped remote location.
+async fn upload_paths(
+    app: &AppHandle,
+    project_name: &str,
+    files: Vec<String>,
+) -> AppResult<String> {
+    if files.is_empty() {
+        return Err(AppError::Other("no files given".into()));
+    }
+    let (project, sid) = ensure_session(app, project_name).await?;
+    let mut uploaded: Vec<String> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    for rel in files {
+        match crate::commands::deploy::deploy_file(
+            project.id,
+            rel.clone(),
+            Some(sid.clone()),
+            app.state(),
+        )
+        .await
+        {
+            Ok(()) => uploaded.push(rel),
+            Err(e) => errors.push(format!("{rel}: {e}")),
+        }
+    }
+    Ok(pretty(json!({
+        "uploaded": uploaded,
+        "count": uploaded.len(),
+        "errors": errors,
+    })))
 }
 
 async fn sync(app: &AppHandle, project_name: &str, delete: bool) -> AppResult<String> {

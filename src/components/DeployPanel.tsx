@@ -138,13 +138,13 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
       await runDeployJob(
         `Sync${deleteExtraneous ? " + delete" : ""}`,
         async ({ jobId }) => {
-          const s = await api.deploySync(
+          const r = await api.deploySmartSync(
             projectId,
             sessionId ?? null,
             deleteExtraneous,
             jobId,
           );
-          return `✓ ${s.uploaded} uploaded · ${s.deleted} deleted · ${s.unchanged} unchanged`;
+          return `✓ ${r.summary} · via ${r.engine}`;
         },
       );
     } finally {

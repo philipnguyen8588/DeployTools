@@ -14,6 +14,7 @@ pub mod mcp;
 pub mod models;
 pub mod rsync;
 pub mod settings;
+pub mod syncstate;
 pub mod ssh;
 pub mod state;
 pub mod vault;
@@ -118,6 +119,7 @@ pub fn run() {
             commands::deploy::deploy_folder,
             commands::deploy::deploy_rsync,
             commands::deploy::deploy_sync,
+            commands::deploy::deploy_smart_sync,
             commands::deploy::download_to_mapped,
             commands::deploy::download_to,
             commands::deploy::cancel_deploy,

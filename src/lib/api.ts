@@ -156,6 +156,18 @@ export const deploySync = (
     "deploy_sync",
     { projectId, sessionId, deleteExtraneous, jobId: jobId ?? null },
   );
+export const deploySmartSync = (
+  projectId: UUID,
+  sessionId: string | null,
+  deleteExtraneous: boolean,
+  jobId?: string | null,
+) =>
+  invoke<{ engine: string; summary: string }>("deploy_smart_sync", {
+    projectId,
+    sessionId,
+    deleteExtraneous,
+    jobId: jobId ?? null,
+  });
 export const downloadToMapped = (
   projectId: UUID,
   sessionId: string,
