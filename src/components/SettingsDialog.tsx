@@ -48,10 +48,35 @@ export function SettingsDialog({ onClose }: Props) {
   const [ides, setIdes] = useState<api.IdeEntry[]>([]);
   const [mcp, setMcp] = useState<api.McpConfig | null>(null);
   const [showToken, setShowToken] = useState(false);
+  const [cmdPolicy, setCmdPolicy] = useState<api.McpCommandPolicy | null>(null);
+  const [cmdMode, setCmdMode] = useState<string>("deny");
+  const [denyDraft, setDenyDraft] = useState<string>("");
 
   async function reloadMcp() {
     try {
       setMcp(await api.mcpGetConfig());
+      const pol = await api.mcpGetCommandPolicy();
+      setCmdPolicy(pol);
+      setCmdMode(pol.mode);
+      setDenyDraft(pol.denylist.join("\n"));
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
+  async function saveCmdPolicy(nextMode?: string) {
+    const mode = nextMode ?? cmdMode;
+    const list = denyDraft
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    try {
+      await api.mcpSetCommandPolicy(mode, list);
+      setCmdMode(mode);
+      toast.success("Command guard updated");
+      const pol = await api.mcpGetCommandPolicy();
+      setCmdPolicy(pol);
+      setDenyDraft(pol.denylist.join("\n"));
     } catch (e) {
       toast.error(`${e}`);
     }
@@ -591,6 +616,66 @@ export function SettingsDialog({ onClose }: Props) {
                     The app must be open and the vault unlocked for agent calls
                     to work.
                   </p>
+                </div>
+
+                {/* Terminal command guard for run_command */}
+                <div className="space-y-2 border-t pt-2">
+                  <div className="text-[11px] font-medium">
+                    Terminal command guard (run_command)
+                  </div>
+                  <div className="flex gap-1">
+                    {(["off", "deny", "disabled"] as const).map((m) => (
+                      <Button
+                        key={m}
+                        size="xs"
+                        variant={cmdMode === m ? "default" : "outline"}
+                        onClick={() => void saveCmdPolicy(m)}
+                      >
+                        {m === "off"
+                          ? "Off"
+                          : m === "deny"
+                            ? "Block dangerous"
+                            : "Disabled"}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {cmdMode === "off" &&
+                      "All commands allowed — no protection."}
+                    {cmdMode === "deny" &&
+                      "Dangerous commands are blocked (denylist below). A denylist is a strong deterrent, not a full sandbox."}
+                    {cmdMode === "disabled" &&
+                      "run_command is fully disabled for AI agents."}
+                  </p>
+                  {cmdMode === "deny" && (
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">
+                        Blocked programs (one per line)
+                      </Label>
+                      <textarea
+                        value={denyDraft}
+                        onChange={(e) => setDenyDraft(e.target.value)}
+                        rows={4}
+                        spellCheck={false}
+                        className="w-full rounded border bg-background px-2 py-1 font-mono text-[11px]"
+                      />
+                      <div className="flex gap-2">
+                        <Button size="xs" onClick={() => void saveCmdPolicy()}>
+                          Save list
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={() =>
+                            cmdPolicy &&
+                            setDenyDraft(cmdPolicy.defaults.join("\n"))
+                          }
+                        >
+                          Reset to defaults
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

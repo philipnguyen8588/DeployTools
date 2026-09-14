@@ -145,6 +145,44 @@ pub fn mcp_set_enabled(
     Ok(())
 }
 
+#[derive(Serialize)]
+pub struct McpCommandPolicy {
+    /// `off` | `deny` | `disabled`.
+    pub mode: String,
+    /// Effective denied program basenames.
+    pub denylist: Vec<String>,
+    /// Built-in defaults (for the "Reset to defaults" button).
+    pub defaults: Vec<String>,
+}
+
+#[tauri::command]
+pub fn mcp_get_command_policy() -> McpCommandPolicy {
+    McpCommandPolicy {
+        mode: settings::mcp_cmd_mode(),
+        denylist: settings::mcp_denied_programs(),
+        defaults: crate::mcp::policy::default_denied_programs(),
+    }
+}
+
+#[tauri::command]
+pub fn mcp_set_command_policy(
+    mode: String,
+    denylist: Vec<String>,
+) -> Result<(), String> {
+    if !matches!(mode.as_str(), "off" | "deny" | "disabled") {
+        return Err(format!("invalid mode: {mode}"));
+    }
+    let cleaned: Vec<String> = denylist
+        .into_iter()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut s = settings::load();
+    s.mcp_cmd_mode = Some(mode);
+    s.mcp_cmd_denylist = Some(cleaned);
+    settings::save(&s).map_err(|e| format!("Save settings: {e}"))
+}
+
 /// Generate a fresh token, persist it, and restart the server so the new
 /// token takes effect. Async so we can let the old listener release the
 /// port before rebinding.

@@ -337,6 +337,16 @@ export const mcpSetEnabled = (enabled: boolean) =>
   invoke<void>("mcp_set_enabled", { enabled });
 export const mcpRegenerateToken = () => invoke<string>("mcp_regenerate_token");
 
+export interface McpCommandPolicy {
+  mode: string; // "off" | "deny" | "disabled"
+  denylist: string[];
+  defaults: string[];
+}
+export const mcpGetCommandPolicy = () =>
+  invoke<McpCommandPolicy>("mcp_get_command_policy");
+export const mcpSetCommandPolicy = (mode: string, denylist: string[]) =>
+  invoke<void>("mcp_set_command_policy", { mode, denylist });
+
 // --- SSH local-forward tunnels ---
 export interface TunnelInfo {
   id: string;

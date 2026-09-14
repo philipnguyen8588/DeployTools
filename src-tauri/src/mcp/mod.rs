@@ -5,6 +5,7 @@
 //! /mcp` endpoint, bearer-token auth. It reuses the running app's unlocked
 //! vault + live SSH sessions via the AppHandle (see `tools.rs`).
 
+pub mod policy;
 pub mod protocol;
 pub mod tools;
 

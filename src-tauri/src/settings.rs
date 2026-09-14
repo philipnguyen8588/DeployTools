@@ -56,6 +56,16 @@ pub struct Settings {
     /// Bearer token required on every MCP request. Generated on first run.
     #[serde(default)]
     pub mcp_token: Option<String>,
+
+    /// Command guard mode for the MCP `run_command` tool:
+    /// `off` (allow all) | `deny` (block dangerous — default) | `disabled`.
+    #[serde(default)]
+    pub mcp_cmd_mode: Option<String>,
+
+    /// Denied program basenames for the `deny` guard mode. `None` = use the
+    /// built-in defaults (`crate::mcp::policy::default_denied_programs`).
+    #[serde(default)]
+    pub mcp_cmd_denylist: Option<Vec<String>>,
 }
 
 /// Default MCP server port (bound on 127.0.0.1 only).
@@ -67,6 +77,21 @@ pub fn mcp_enabled() -> bool {
 
 pub fn mcp_port() -> u16 {
     load().mcp_port.unwrap_or(DEFAULT_MCP_PORT)
+}
+
+/// Command guard mode for the MCP terminal tool.
+pub fn mcp_cmd_mode() -> String {
+    load()
+        .mcp_cmd_mode
+        .filter(|m| matches!(m.as_str(), "off" | "deny" | "disabled"))
+        .unwrap_or_else(|| "deny".to_string())
+}
+
+/// Effective denied-program list — user override or built-in defaults.
+pub fn mcp_denied_programs() -> Vec<String> {
+    load()
+        .mcp_cmd_denylist
+        .unwrap_or_else(crate::mcp::policy::default_denied_programs)
 }
 
 /// Return the persisted MCP token, generating + saving one if absent.

@@ -84,8 +84,13 @@ pub fn list() -> Value {
             ),
         ),
         tool(
+            "command_policy",
+            "Return the guard policy for run_command: mode, the list of disallowed program names, and the structural rules. Call this to learn which commands are blocked before using run_command.",
+            schema(json!({}), &[]),
+        ),
+        tool(
             "run_command",
-            "Run a shell command on the connected server (login shell) and return stdout, stderr and exit code.",
+            "Run a shell command on the connected server (login shell) and return stdout, stderr and exit code. A safety guard BLOCKS dangerous commands (rm, kill, dd, mkfs, shutdown, chmod 777, privilege escalation, piping into a shell, writes to block devices, fork bombs, …); blocked calls return an error. Call command_policy for the exact blocklist.",
             schema(
                 json!({
                     "project": { "type": "string", "description": "Project name" },
@@ -116,6 +121,7 @@ async fn dispatch(app: &AppHandle, name: &str, args: Value) -> AppResult<String>
         "disconnect_project" => disconnect(app, &arg_str(&args, "project")?).await,
         "git_changed_files" => git_changed(app, &arg_str(&args, "project")?).await,
         "list_excludes" => list_excludes(app, &arg_str(&args, "project")?).await,
+        "command_policy" => command_policy().await,
         "upload_changed_files" => {
             upload_changed(app, &arg_str(&args, "project")?, arg_list(&args, "files")).await
         }
@@ -230,6 +236,17 @@ async fn git_changed(app: &AppHandle, project_name: &str) -> AppResult<String> {
     Ok(pretty(serde_json::to_value(&files)?))
 }
 
+async fn command_policy() -> AppResult<String> {
+    let mode = crate::settings::mcp_cmd_mode();
+    Ok(pretty(json!({
+        "mode": mode,
+        "modes": ["off", "deny", "disabled"],
+        "denied_programs": crate::settings::mcp_denied_programs(),
+        "structural_rules": crate::mcp::policy::structural_rules(),
+        "note": "run_command is screened by a denylist guard (not a full sandbox). Blocked calls return an error. 'off' allows all; 'disabled' blocks run_command entirely.",
+    })))
+}
+
 async fn list_excludes(app: &AppHandle, project_name: &str) -> AppResult<String> {
     let project = find_project(app, project_name).await?;
     let baseline: Vec<String> = crate::commands::deploy::baseline_excludes()
@@ -313,6 +330,17 @@ async fn run_command(
     command: &str,
     working_dir: Option<String>,
 ) -> AppResult<String> {
+    // Screen the command against the configured guard BEFORE connecting.
+    if let Err(reason) = crate::mcp::policy::check(
+        command,
+        &crate::settings::mcp_cmd_mode(),
+        &crate::settings::mcp_denied_programs(),
+    ) {
+        return Err(AppError::Other(format!(
+            "Command blocked by guard: {reason}. Call the 'command_policy' tool to see what's disallowed."
+        )));
+    }
+
     let (_project, sid) = ensure_session(app, project_name).await?;
     let session = app.state::<AppState>().sessions.get(&sid)?;
     let argv = vec!["bash".to_string(), "-lc".to_string(), command.to_string()];

@@ -187,6 +187,8 @@ pub fn run() {
             commands::settings::mcp_get_config,
             commands::settings::mcp_set_enabled,
             commands::settings::mcp_regenerate_token,
+            commands::settings::mcp_get_command_policy,
+            commands::settings::mcp_set_command_policy,
             // Cloudflare
             commands::cloudflare::cf_has_token,
             commands::cloudflare::cf_set_token,
