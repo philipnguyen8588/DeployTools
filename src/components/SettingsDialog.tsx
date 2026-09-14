@@ -9,6 +9,11 @@ import {
   CheckCircle2,
   XCircle,
   Sparkles,
+  Bot,
+  Copy,
+  RefreshCw,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -41,6 +46,42 @@ export function SettingsDialog({ onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const [idleDraft, setIdleDraft] = useState<string>("");
   const [ides, setIdes] = useState<api.IdeEntry[]>([]);
+  const [mcp, setMcp] = useState<api.McpConfig | null>(null);
+  const [showToken, setShowToken] = useState(false);
+
+  async function reloadMcp() {
+    try {
+      setMcp(await api.mcpGetConfig());
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
+  async function toggleMcp() {
+    if (!mcp) return;
+    try {
+      await api.mcpSetEnabled(!mcp.enabled);
+      await reloadMcp();
+      toast.success(mcp.enabled ? "MCP server stopped" : "MCP server started");
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
+  async function regenMcpToken() {
+    try {
+      await api.mcpRegenerateToken();
+      await reloadMcp();
+      toast.success("New MCP token generated");
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
+  function copyText(text: string, what: string) {
+    void navigator.clipboard.writeText(text);
+    toast.success(`${what} copied`);
+  }
 
   async function reload() {
     try {
@@ -63,6 +104,7 @@ export function SettingsDialog({ onClose }: Props) {
   useEffect(() => {
     void reload();
     void reloadIdes();
+    void reloadMcp();
   }, []);
 
   async function pickIdeExe(key: string) {
@@ -445,6 +487,113 @@ export function SettingsDialog({ onClose }: Props) {
                 </div>
               </div>
             </div>
+
+            {/* MCP server — lets AI agents (Claude Code) drive the app. */}
+            {mcp && (
+              <div className="space-y-2 border-t pt-3">
+                <div className="flex items-center gap-2">
+                  <div className="flex flex-1 items-center gap-2 text-sm font-medium">
+                    <Bot className="h-4 w-4 text-primary" />
+                    AI agent control (MCP)
+                    {mcp.running ? (
+                      <span className="rounded bg-green-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-green-600 dark:text-green-400">
+                        RUNNING
+                      </span>
+                    ) : (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                        STOPPED
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    size="xs"
+                    variant={mcp.enabled ? "outline" : "default"}
+                    onClick={() => void toggleMcp()}
+                  >
+                    {mcp.enabled ? "Disable" : "Enable"}
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Exposes a local MCP server on{" "}
+                  <span className="font-mono">127.0.0.1:{mcp.port}</span> so
+                  Claude Code / AI agents can connect to projects, upload git
+                  changes, run sync, and execute commands on the connected
+                  server. Requires the bearer token below.
+                </p>
+
+                {/* Token */}
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">
+                    Token
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      readOnly
+                      type={showToken ? "text" : "password"}
+                      value={mcp.token}
+                      className="h-8 flex-1 font-mono text-xs"
+                    />
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      onClick={() => setShowToken((v) => !v)}
+                      title={showToken ? "Hide" : "Show"}
+                    >
+                      {showToken ? (
+                        <EyeOff className="h-3.5 w-3.5" />
+                      ) : (
+                        <Eye className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      onClick={() => copyText(mcp.token, "Token")}
+                      title="Copy token"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      onClick={() => void regenMcpToken()}
+                      title="Regenerate token (restarts the server)"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Ready-to-copy Claude Code command */}
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">
+                    Add to Claude Code
+                  </Label>
+                  <div className="flex items-start gap-2">
+                    <code className="flex-1 break-all rounded border bg-muted/30 px-2 py-1.5 font-mono text-[11px]">
+                      {`claude mcp add deploytools --transport http --url http://127.0.0.1:${mcp.port}/mcp --header "Authorization: Bearer ${mcp.token}"`}
+                    </code>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      onClick={() =>
+                        copyText(
+                          `claude mcp add deploytools --transport http --url http://127.0.0.1:${mcp.port}/mcp --header "Authorization: Bearer ${mcp.token}"`,
+                          "Command",
+                        )
+                      }
+                      title="Copy command"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    The app must be open and the vault unlocked for agent calls
+                    to work.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Info */}
             <div className="space-y-1 border-t pt-3 text-[11px] text-muted-foreground">

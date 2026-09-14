@@ -43,6 +43,45 @@ pub struct Settings {
     /// appear in `ide_paths`. Built-in keys are NOT stored here.
     #[serde(default)]
     pub custom_ide_labels: HashMap<String, String>,
+
+    /// Whether the embedded MCP server (lets AI agents drive the app) is
+    /// enabled. `None` = default (enabled).
+    #[serde(default)]
+    pub mcp_enabled: Option<bool>,
+
+    /// TCP port the MCP server binds on 127.0.0.1. `None` = default.
+    #[serde(default)]
+    pub mcp_port: Option<u16>,
+
+    /// Bearer token required on every MCP request. Generated on first run.
+    #[serde(default)]
+    pub mcp_token: Option<String>,
+}
+
+/// Default MCP server port (bound on 127.0.0.1 only).
+pub const DEFAULT_MCP_PORT: u16 = 8765;
+
+pub fn mcp_enabled() -> bool {
+    load().mcp_enabled.unwrap_or(true)
+}
+
+pub fn mcp_port() -> u16 {
+    load().mcp_port.unwrap_or(DEFAULT_MCP_PORT)
+}
+
+/// Return the persisted MCP token, generating + saving one if absent.
+pub fn ensure_mcp_token() -> String {
+    let mut s = load();
+    if let Some(t) = &s.mcp_token {
+        if !t.is_empty() {
+            return t.clone();
+        }
+    }
+    let bytes: [u8; 24] = rand::random();
+    let token = hex::encode(bytes);
+    s.mcp_token = Some(token.clone());
+    let _ = save(&s);
+    token
 }
 
 /// Built-in default when the user hasn't configured anything.

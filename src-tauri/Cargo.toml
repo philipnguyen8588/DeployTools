@@ -81,6 +81,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 serde_yaml = "0.9"
 suppaftp = { version = "6", features = ["async"] }
 
+# Embedded HTTP server for the MCP endpoint (AI agents drive the app).
+axum = "0.7"
+
 # macOS-only: used to give the frameless window native rounded corners
 # via CALayer (public AppKit APIs). Not compiled on Windows/Linux.
 [target.'cfg(target_os = "macos")'.dependencies]

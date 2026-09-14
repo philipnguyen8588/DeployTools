@@ -8,9 +8,10 @@
 use std::path::PathBuf;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 
 use crate::settings;
+use crate::state::AppState;
 
 #[derive(Serialize)]
 pub struct SettingsView {
@@ -99,4 +100,82 @@ pub fn reset_vault_dir() -> Result<(), String> {
 #[tauri::command]
 pub fn restart_app(app: AppHandle) {
     app.restart();
+}
+
+// --- MCP server (lets AI agents drive the app) ---
+
+#[derive(Serialize)]
+pub struct McpConfig {
+    pub enabled: bool,
+    pub port: u16,
+    pub token: String,
+    pub running: bool,
+}
+
+#[tauri::command]
+pub fn mcp_get_config(state: State<'_, AppState>) -> McpConfig {
+    McpConfig {
+        enabled: settings::mcp_enabled(),
+        port: settings::mcp_port(),
+        token: settings::ensure_mcp_token(),
+        running: state.mcp_shutdown.lock().unwrap().is_some(),
+    }
+}
+
+#[tauri::command]
+pub fn mcp_set_enabled(
+    enabled: bool,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut s = settings::load();
+    s.mcp_enabled = Some(enabled);
+    settings::save(&s).map_err(|e| format!("Save settings: {e}"))?;
+
+    let mut guard = state.mcp_shutdown.lock().unwrap();
+    if enabled {
+        if guard.is_none() {
+            let token = settings::ensure_mcp_token();
+            let tx = crate::mcp::spawn(app.clone(), settings::mcp_port(), token);
+            *guard = Some(tx);
+        }
+    } else if let Some(tx) = guard.take() {
+        let _ = tx.send(true);
+    }
+    Ok(())
+}
+
+/// Generate a fresh token, persist it, and restart the server so the new
+/// token takes effect. Async so we can let the old listener release the
+/// port before rebinding.
+#[tauri::command]
+pub async fn mcp_regenerate_token(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let bytes: [u8; 24] = rand::random();
+    let token = hex::encode(bytes);
+    let mut s = settings::load();
+    s.mcp_token = Some(token.clone());
+    settings::save(&s).map_err(|e| format!("Save settings: {e}"))?;
+
+    // Stop the running server (if any), releasing the lock before awaiting.
+    let was_running = {
+        let mut guard = state.mcp_shutdown.lock().unwrap();
+        match guard.take() {
+            Some(tx) => {
+                let _ = tx.send(true);
+                true
+            }
+            None => false,
+        }
+    };
+
+    if was_running && settings::mcp_enabled() {
+        // Give the old listener a moment to free the port before rebinding.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let tx = crate::mcp::spawn(app.clone(), settings::mcp_port(), token.clone());
+        *state.mcp_shutdown.lock().unwrap() = Some(tx);
+    }
+    Ok(token)
 }

@@ -47,6 +47,11 @@ pub struct AppState {
     /// batch download), keyed by a frontend-generated job id. Set to true
     /// by `cancel_deploy` and polled inside the transfer loops.
     pub deploy_cancels: Arc<DashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
+
+    /// Shutdown sender for the embedded MCP server, if running. `Some`
+    /// while the server is up; sending `true` stops it. Guarded by a plain
+    /// mutex — only ever locked briefly, never across an await.
+    pub mcp_shutdown: std::sync::Mutex<Option<tokio::sync::watch::Sender<bool>>>,
 }
 
 impl AppState {
@@ -66,6 +71,7 @@ impl AppState {
             follow_cancellers: Arc::new(DashMap::new()),
             tunnels: Arc::new(DashMap::new()),
             deploy_cancels: Arc::new(DashMap::new()),
+            mcp_shutdown: std::sync::Mutex::new(None),
         }
     }
 

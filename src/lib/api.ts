@@ -325,6 +325,18 @@ export const openSshTerminal = (serverId: UUID, remotePath?: string) =>
 export const revealPath = (path: string) =>
   invoke<void>("reveal_path", { path });
 
+// --- MCP server (AI agent control) ---
+export interface McpConfig {
+  enabled: boolean;
+  port: number;
+  token: string;
+  running: boolean;
+}
+export const mcpGetConfig = () => invoke<McpConfig>("mcp_get_config");
+export const mcpSetEnabled = (enabled: boolean) =>
+  invoke<void>("mcp_set_enabled", { enabled });
+export const mcpRegenerateToken = () => invoke<string>("mcp_regenerate_token");
+
 // --- SSH local-forward tunnels ---
 export interface TunnelInfo {
   id: string;
