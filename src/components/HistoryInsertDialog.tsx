@@ -36,9 +36,12 @@ interface Props {
  *
  * Clicking a row has the same effect as selecting + Enter.
  */
+type SourceFilter = "all" | "user" | "mcp";
+
 export function HistoryInsertDialog({ serverId, onInsert, onClose }: Props) {
   const [items, setItems] = useState<api.TerminalHistoryEntry[]>([]);
   const [filter, setFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [selected, setSelected] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
   const confirm = useConfirm();
@@ -57,9 +60,12 @@ export function HistoryInsertDialog({ serverId, onInsert, onClose }: Props) {
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((i) => i.command.toLowerCase().includes(q));
-  }, [items, filter]);
+    return items.filter(
+      (i) =>
+        (sourceFilter === "all" || i.source === sourceFilter) &&
+        (!q || i.command.toLowerCase().includes(q)),
+    );
+  }, [items, filter, sourceFilter]);
 
   useEffect(() => {
     setSelected((s) => {
@@ -134,16 +140,31 @@ export function HistoryInsertDialog({ serverId, onInsert, onClose }: Props) {
         </DialogHeader>
 
         <div className="flex min-h-0 flex-col gap-2">
-          <div className="relative shrink-0">
-            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              autoFocus
-              placeholder="Filter commands…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              onKeyDown={onSearchKey}
-              className="h-9 pl-7 text-sm"
-            />
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                autoFocus
+                placeholder="Filter commands…"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                onKeyDown={onSearchKey}
+                className="h-9 pl-7 text-sm"
+              />
+            </div>
+            <div className="flex gap-0.5">
+              {(["all", "user", "mcp"] as const).map((sf) => (
+                <Button
+                  key={sf}
+                  size="sm"
+                  variant={sourceFilter === sf ? "default" : "outline"}
+                  onClick={() => setSourceFilter(sf)}
+                  className="h-9"
+                >
+                  {sf === "all" ? "All" : sf === "user" ? "Me" : "MCP"}
+                </Button>
+              ))}
+            </div>
           </div>
 
           <div className="min-h-0 overflow-hidden rounded-md border">
@@ -175,6 +196,11 @@ export function HistoryInsertDialog({ serverId, onInsert, onClose }: Props) {
                       <span className="w-20 shrink-0 text-[10px] text-muted-foreground">
                         {formatRelative(h.time_ms)}
                       </span>
+                      {h.source === "mcp" && (
+                        <span className="shrink-0 rounded bg-primary/15 px-1 py-0 text-[9px] font-semibold uppercase leading-4 text-primary">
+                          MCP
+                        </span>
+                      )}
                       <code className="min-w-0 flex-1 truncate font-mono text-xs">
                         {h.command}
                       </code>

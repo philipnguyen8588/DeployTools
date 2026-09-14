@@ -7,7 +7,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::errors::AppResult;
-use crate::models::TerminalHistoryEntry;
+use crate::models::{HistorySource, TerminalHistoryEntry};
 use crate::state::AppState;
 
 /// Hard cap per server. When exceeded, the oldest entries are dropped.
@@ -43,7 +43,19 @@ pub async fn history_list(
 pub async fn history_add(
     server_id: Uuid,
     command: String,
+    source: Option<HistorySource>,
     state: State<'_, AppState>,
+) -> AppResult<()> {
+    add(state.inner(), server_id, command, source.unwrap_or_default()).await
+}
+
+/// Backend helper — used by the `history_add` command (user commands) and
+/// by the MCP layer (agent `run_command`, tagged `Mcp`).
+pub async fn add(
+    state: &AppState,
+    server_id: Uuid,
+    command: String,
+    source: HistorySource,
 ) -> AppResult<()> {
     let trimmed = command.trim().to_string();
     if trimmed.is_empty() {
@@ -57,14 +69,14 @@ pub async fn history_add(
         .vault
         .write(|d| {
             // Collapse repeats: if the most recent entry for this server
-            // matches, just update its timestamp instead of appending.
+            // matches (same command AND source), just bump its timestamp.
             if let Some(last) = d
                 .terminal_history
                 .iter_mut()
                 .rev()
                 .find(|e| e.server_id == server_id)
             {
-                if last.command == trimmed {
+                if last.command == trimmed && last.source == source {
                     last.time_ms = now;
                     return;
                 }
@@ -74,6 +86,7 @@ pub async fn history_add(
                 server_id,
                 command: trimmed,
                 time_ms: now,
+                source,
             });
             // Enforce per-server cap.
             let mut count = 0usize;

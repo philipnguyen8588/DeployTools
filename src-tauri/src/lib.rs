@@ -54,20 +54,8 @@ pub fn run() {
         .setup(|app| {
             let state = AppState::new(app.handle().clone());
             app.manage(state);
-
-            // Start the embedded MCP server (lets AI agents drive the app)
-            // if enabled. The token is generated + persisted on first run.
-            {
-                let token = crate::settings::ensure_mcp_token();
-                if crate::settings::mcp_enabled() {
-                    let tx = crate::mcp::spawn(
-                        app.handle().clone(),
-                        crate::settings::mcp_port(),
-                        token,
-                    );
-                    *app.state::<AppState>().mcp_shutdown.lock().unwrap() = Some(tx);
-                }
-            }
+            // The MCP server starts on vault unlock (its config lives in the
+            // vault) — see commands::vault::vault_unlock.
 
             // Belt-and-suspenders: force the native title bar off after the
             // window-state plugin has restored. Guarantees no native macOS
@@ -189,6 +177,8 @@ pub fn run() {
             commands::settings::mcp_regenerate_token,
             commands::settings::mcp_get_command_policy,
             commands::settings::mcp_set_command_policy,
+            commands::settings::mcp_activity_list,
+            commands::settings::mcp_activity_clear,
             // Cloudflare
             commands::cloudflare::cf_has_token,
             commands::cloudflare::cf_set_token,

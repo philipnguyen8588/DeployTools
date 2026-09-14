@@ -147,6 +147,16 @@ fn default_rsync_flags() -> String {
 /// One line the user typed into a terminal, keyed by server. Stored in
 /// the encrypted vault alongside everything else so it only exists in
 /// plaintext while the vault is unlocked.
+/// Who issued a command — the user typing in the terminal, or an AI agent
+/// via the MCP `run_command` tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistorySource {
+    #[default]
+    User,
+    Mcp,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalHistoryEntry {
     pub id: Uuid,
@@ -154,6 +164,25 @@ pub struct TerminalHistoryEntry {
     pub command: String,
     /// Milliseconds since Unix epoch.
     pub time_ms: u64,
+    /// Who ran it. Old vaults default to `user`.
+    #[serde(default)]
+    pub source: HistorySource,
+}
+
+/// One MCP tool invocation, recorded for auditing ("what did the agent
+/// do?"). Stored in the encrypted vault like everything else.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpActivityEntry {
+    pub id: Uuid,
+    /// Milliseconds since Unix epoch.
+    pub time_ms: u64,
+    /// Tool name, e.g. `run_command`, `sync`, `upload_changed_files`.
+    pub tool: String,
+    /// Project the tool targeted, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// Short human summary (the command, or ok/error status).
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -178,6 +207,27 @@ pub struct VaultData {
     /// `commands::history::HISTORY_CAP`.
     #[serde(default)]
     pub terminal_history: Vec<TerminalHistoryEntry>,
+
+    // --- MCP (AI agent control) — kept in the vault so there's no
+    // separate plaintext settings file for it. ---
+    /// Whether the embedded MCP server is enabled. `None` = default (true).
+    #[serde(default)]
+    pub mcp_enabled: Option<bool>,
+    /// TCP port bound on 127.0.0.1. `None` = default.
+    #[serde(default)]
+    pub mcp_port: Option<u16>,
+    /// Bearer token required on every MCP request. Generated on first use.
+    #[serde(default)]
+    pub mcp_token: Option<String>,
+    /// Command guard mode for `run_command`: `off` | `deny` | `disabled`.
+    #[serde(default)]
+    pub mcp_cmd_mode: Option<String>,
+    /// Denied program basenames for the `deny` guard. `None` = built-ins.
+    #[serde(default)]
+    pub mcp_cmd_denylist: Option<Vec<String>>,
+    /// Audit log of MCP tool invocations (newest appended last).
+    #[serde(default)]
+    pub mcp_activity: Vec<McpActivityEntry>,
 }
 
 /// A named bucket that groups a handful of related servers together in

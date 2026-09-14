@@ -51,6 +51,25 @@ export function SettingsDialog({ onClose }: Props) {
   const [cmdPolicy, setCmdPolicy] = useState<api.McpCommandPolicy | null>(null);
   const [cmdMode, setCmdMode] = useState<string>("deny");
   const [denyDraft, setDenyDraft] = useState<string>("");
+  const [activity, setActivity] = useState<api.McpActivityEntry[] | null>(null);
+
+  async function loadActivity() {
+    try {
+      setActivity(await api.mcpActivityList(200));
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
+  async function clearActivity() {
+    try {
+      await api.mcpActivityClear();
+      setActivity([]);
+      toast.success("MCP activity log cleared");
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
 
   async function reloadMcp() {
     try {
@@ -676,6 +695,76 @@ export function SettingsDialog({ onClose }: Props) {
                       </div>
                     </div>
                   )}
+                </div>
+
+                {/* MCP activity audit log */}
+                <div className="space-y-2 border-t pt-2">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 text-[11px] font-medium">
+                      MCP activity log
+                    </div>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        activity === null ? void loadActivity() : setActivity(null)
+                      }
+                    >
+                      {activity === null ? "View" : "Hide"}
+                    </Button>
+                    {activity !== null && (
+                      <>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => void loadActivity()}
+                        >
+                          Refresh
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          disabled={activity.length === 0}
+                          onClick={() => void clearActivity()}
+                        >
+                          Clear
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Every action an AI agent performs via MCP (connect, sync,
+                    upload, run_command…) is recorded here.
+                  </p>
+                  {activity !== null &&
+                    (activity.length === 0 ? (
+                      <div className="rounded border p-3 text-center text-[11px] text-muted-foreground">
+                        No MCP activity yet.
+                      </div>
+                    ) : (
+                      <div className="max-h-48 overflow-y-auto rounded border">
+                        <table className="w-full text-[11px]">
+                          <tbody>
+                            {activity.map((a) => (
+                              <tr key={a.id} className="border-b last:border-0">
+                                <td className="whitespace-nowrap px-2 py-1 align-top text-muted-foreground">
+                                  {new Date(a.time_ms).toLocaleString()}
+                                </td>
+                                <td className="px-2 py-1 align-top font-mono">
+                                  {a.tool}
+                                </td>
+                                <td className="px-2 py-1 align-top text-muted-foreground">
+                                  {a.project ?? "—"}
+                                </td>
+                                <td className="break-all px-2 py-1 align-top font-mono">
+                                  {a.detail}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ))}
                 </div>
               </div>
             )}

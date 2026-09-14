@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
+use crate::errors::{AppError, AppResult};
 use crate::settings;
 use crate::state::AppState;
 
@@ -103,6 +104,9 @@ pub fn restart_app(app: AppHandle) {
 }
 
 // --- MCP server (lets AI agents drive the app) ---
+//
+// Config lives in the encrypted vault, so these commands require the vault
+// to be unlocked (the Settings UI is only reachable once it is).
 
 #[derive(Serialize)]
 pub struct McpConfig {
@@ -113,36 +117,40 @@ pub struct McpConfig {
 }
 
 #[tauri::command]
-pub fn mcp_get_config(state: State<'_, AppState>) -> McpConfig {
-    McpConfig {
-        enabled: settings::mcp_enabled(),
-        port: settings::mcp_port(),
-        token: settings::ensure_mcp_token(),
+pub async fn mcp_get_config(state: State<'_, AppState>) -> AppResult<McpConfig> {
+    let token = crate::mcp::ensure_token(state.inner()).await?;
+    let cfg = crate::mcp::read_cfg(state.inner()).await?;
+    Ok(McpConfig {
+        enabled: cfg.enabled,
+        port: cfg.port,
+        token,
         running: state.mcp_shutdown.lock().unwrap().is_some(),
-    }
+    })
 }
 
 #[tauri::command]
-pub fn mcp_set_enabled(
-    enabled: bool,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let mut s = settings::load();
-    s.mcp_enabled = Some(enabled);
-    settings::save(&s).map_err(|e| format!("Save settings: {e}"))?;
-
-    let mut guard = state.mcp_shutdown.lock().unwrap();
+pub async fn mcp_set_enabled(enabled: bool, state: State<'_, AppState>) -> AppResult<()> {
+    state
+        .vault
+        .write(move |d| d.mcp_enabled = Some(enabled))
+        .await?;
     if enabled {
-        if guard.is_none() {
-            let token = settings::ensure_mcp_token();
-            let tx = crate::mcp::spawn(app.clone(), settings::mcp_port(), token);
-            *guard = Some(tx);
-        }
-    } else if let Some(tx) = guard.take() {
-        let _ = tx.send(true);
+        crate::mcp::start(state.inner()).await?;
+    } else {
+        crate::mcp::stop(state.inner());
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn mcp_regenerate_token(state: State<'_, AppState>) -> AppResult<String> {
+    let bytes: [u8; 24] = rand::random();
+    let token = hex::encode(bytes);
+    let t2 = token.clone();
+    state.vault.write(move |d| d.mcp_token = Some(t2)).await?;
+    // Restart so the new token takes effect (spawn has bind-retry).
+    crate::mcp::start(state.inner()).await?;
+    Ok(token)
 }
 
 #[derive(Serialize)]
@@ -156,64 +164,54 @@ pub struct McpCommandPolicy {
 }
 
 #[tauri::command]
-pub fn mcp_get_command_policy() -> McpCommandPolicy {
-    McpCommandPolicy {
-        mode: settings::mcp_cmd_mode(),
-        denylist: settings::mcp_denied_programs(),
+pub async fn mcp_get_command_policy(state: State<'_, AppState>) -> AppResult<McpCommandPolicy> {
+    let cfg = crate::mcp::read_cfg(state.inner()).await?;
+    Ok(McpCommandPolicy {
+        mode: cfg.cmd_mode,
+        denylist: cfg.cmd_denylist,
         defaults: crate::mcp::policy::default_denied_programs(),
-    }
+    })
 }
 
 #[tauri::command]
-pub fn mcp_set_command_policy(
+pub async fn mcp_set_command_policy(
     mode: String,
     denylist: Vec<String>,
-) -> Result<(), String> {
+    state: State<'_, AppState>,
+) -> AppResult<()> {
     if !matches!(mode.as_str(), "off" | "deny" | "disabled") {
-        return Err(format!("invalid mode: {mode}"));
+        return Err(AppError::Other(format!("invalid mode: {mode}")));
     }
     let cleaned: Vec<String> = denylist
         .into_iter()
         .map(|s| s.trim().to_ascii_lowercase())
         .filter(|s| !s.is_empty())
         .collect();
-    let mut s = settings::load();
-    s.mcp_cmd_mode = Some(mode);
-    s.mcp_cmd_denylist = Some(cleaned);
-    settings::save(&s).map_err(|e| format!("Save settings: {e}"))
+    state
+        .vault
+        .write(move |d| {
+            d.mcp_cmd_mode = Some(mode);
+            d.mcp_cmd_denylist = Some(cleaned);
+        })
+        .await
 }
 
-/// Generate a fresh token, persist it, and restart the server so the new
-/// token takes effect. Async so we can let the old listener release the
-/// port before rebinding.
+// --- MCP activity audit log (stored in the vault) ---
+
 #[tauri::command]
-pub async fn mcp_regenerate_token(
-    app: AppHandle,
+pub async fn mcp_activity_list(
+    limit: Option<usize>,
     state: State<'_, AppState>,
-) -> Result<String, String> {
-    let bytes: [u8; 24] = rand::random();
-    let token = hex::encode(bytes);
-    let mut s = settings::load();
-    s.mcp_token = Some(token.clone());
-    settings::save(&s).map_err(|e| format!("Save settings: {e}"))?;
-
-    // Stop the running server (if any), releasing the lock before awaiting.
-    let was_running = {
-        let mut guard = state.mcp_shutdown.lock().unwrap();
-        match guard.take() {
-            Some(tx) => {
-                let _ = tx.send(true);
-                true
-            }
-            None => false,
-        }
-    };
-
-    if was_running && settings::mcp_enabled() {
-        // Give the old listener a moment to free the port before rebinding.
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        let tx = crate::mcp::spawn(app.clone(), settings::mcp_port(), token.clone());
-        *state.mcp_shutdown.lock().unwrap() = Some(tx);
+) -> AppResult<Vec<crate::models::McpActivityEntry>> {
+    let mut list = state.vault.read(|d| d.mcp_activity.clone()).await?;
+    list.sort_by(|a, b| b.time_ms.cmp(&a.time_ms));
+    if let Some(l) = limit {
+        list.truncate(l);
     }
-    Ok(token)
+    Ok(list)
+}
+
+#[tauri::command]
+pub async fn mcp_activity_clear(state: State<'_, AppState>) -> AppResult<()> {
+    state.vault.write(|d| d.mcp_activity.clear()).await
 }

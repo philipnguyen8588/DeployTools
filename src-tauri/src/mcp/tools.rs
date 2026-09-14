@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
-use crate::models::Project;
+use crate::models::{HistorySource, McpActivityEntry, Project};
 use crate::state::AppState;
 
 /// Tool definitions advertised by `tools/list`.
@@ -110,7 +110,67 @@ pub async fn call(app: &AppHandle, name: &str, args: Value) -> Result<String, St
     if let Some(project) = args.get("project").and_then(|v| v.as_str()) {
         let _ = app.emit("mcp://active", json!({ "project": project, "tool": name }));
     }
-    dispatch(app, name, args).await.map_err(|e| e.to_string())
+    let result = dispatch(app, name, args.clone()).await;
+    log_activity(app, name, &args, &result).await;
+    result.map_err(|e| e.to_string())
+}
+
+/// Tools that represent an action worth auditing (mutating / connecting /
+/// running), as opposed to read-only queries.
+fn is_action(tool: &str) -> bool {
+    matches!(
+        tool,
+        "connect_project"
+            | "disconnect_project"
+            | "upload_changed_files"
+            | "sync"
+            | "sync_and_delete"
+            | "upload_commit_files"
+            | "run_command"
+    )
+}
+
+/// Best-effort append to the vault's MCP audit log.
+async fn log_activity(app: &AppHandle, tool: &str, args: &Value, result: &AppResult<String>) {
+    if !is_action(tool) {
+        return;
+    }
+    let project = args
+        .get("project")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let detail = match result {
+        Ok(_) => match tool {
+            "run_command" => format!(
+                "$ {}",
+                args.get("command").and_then(|v| v.as_str()).unwrap_or("")
+            ),
+            _ => "ok".to_string(),
+        },
+        Err(e) => format!("error: {e}"),
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let entry = McpActivityEntry {
+        id: Uuid::new_v4(),
+        time_ms: now,
+        tool: tool.to_string(),
+        project,
+        detail,
+    };
+    let _ = app
+        .state::<AppState>()
+        .vault
+        .write(move |d| {
+            d.mcp_activity.push(entry);
+            let len = d.mcp_activity.len();
+            if len > 1000 {
+                d.mcp_activity.drain(0..len - 1000);
+            }
+        })
+        .await;
 }
 
 async fn dispatch(app: &AppHandle, name: &str, args: Value) -> AppResult<String> {
@@ -121,7 +181,7 @@ async fn dispatch(app: &AppHandle, name: &str, args: Value) -> AppResult<String>
         "disconnect_project" => disconnect(app, &arg_str(&args, "project")?).await,
         "git_changed_files" => git_changed(app, &arg_str(&args, "project")?).await,
         "list_excludes" => list_excludes(app, &arg_str(&args, "project")?).await,
-        "command_policy" => command_policy().await,
+        "command_policy" => command_policy(app).await,
         "upload_changed_files" => {
             upload_changed(app, &arg_str(&args, "project")?, arg_list(&args, "files")).await
         }
@@ -236,12 +296,12 @@ async fn git_changed(app: &AppHandle, project_name: &str) -> AppResult<String> {
     Ok(pretty(serde_json::to_value(&files)?))
 }
 
-async fn command_policy() -> AppResult<String> {
-    let mode = crate::settings::mcp_cmd_mode();
+async fn command_policy(app: &AppHandle) -> AppResult<String> {
+    let cfg = crate::mcp::read_cfg(app.state::<AppState>().inner()).await?;
     Ok(pretty(json!({
-        "mode": mode,
+        "mode": cfg.cmd_mode,
         "modes": ["off", "deny", "disabled"],
-        "denied_programs": crate::settings::mcp_denied_programs(),
+        "denied_programs": cfg.cmd_denylist,
         "structural_rules": crate::mcp::policy::structural_rules(),
         "note": "run_command is screened by a denylist guard (not a full sandbox). Blocked calls return an error. 'off' allows all; 'disabled' blocks run_command entirely.",
     })))
@@ -330,18 +390,27 @@ async fn run_command(
     command: &str,
     working_dir: Option<String>,
 ) -> AppResult<String> {
-    // Screen the command against the configured guard BEFORE connecting.
-    if let Err(reason) = crate::mcp::policy::check(
-        command,
-        &crate::settings::mcp_cmd_mode(),
-        &crate::settings::mcp_denied_programs(),
-    ) {
+    // Screen the command against the vault-configured guard BEFORE connecting.
+    let (mode, denylist) = match crate::mcp::read_cfg(app.state::<AppState>().inner()).await {
+        Ok(c) => (c.cmd_mode, c.cmd_denylist),
+        Err(_) => ("deny".to_string(), crate::mcp::policy::default_denied_programs()),
+    };
+    if let Err(reason) = crate::mcp::policy::check(command, &mode, &denylist) {
         return Err(AppError::Other(format!(
             "Command blocked by guard: {reason}. Call the 'command_policy' tool to see what's disallowed."
         )));
     }
 
-    let (_project, sid) = ensure_session(app, project_name).await?;
+    let (project, sid) = ensure_session(app, project_name).await?;
+    // Record in the terminal history, tagged as MCP so the History dialog
+    // can tell agent commands apart from the user's own.
+    let _ = crate::commands::history::add(
+        app.state::<AppState>().inner(),
+        project.server_id,
+        command.to_string(),
+        HistorySource::Mcp,
+    )
+    .await;
     let session = app.state::<AppState>().sessions.get(&sid)?;
     let argv = vec!["bash".to_string(), "-lc".to_string(), command.to_string()];
     let (stdout, stderr, exit) =

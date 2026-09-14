@@ -223,6 +223,8 @@ export interface TerminalHistoryEntry {
   server_id: UUID;
   command: string;
   time_ms: number;
+  /** "user" (typed in the terminal) or "mcp" (an AI agent via run_command). */
+  source: "user" | "mcp";
 }
 export const historyList = (serverId: UUID, limit?: number) =>
   invoke<TerminalHistoryEntry[]>("history_list", { serverId, limit });
@@ -346,6 +348,17 @@ export const mcpGetCommandPolicy = () =>
   invoke<McpCommandPolicy>("mcp_get_command_policy");
 export const mcpSetCommandPolicy = (mode: string, denylist: string[]) =>
   invoke<void>("mcp_set_command_policy", { mode, denylist });
+
+export interface McpActivityEntry {
+  id: UUID;
+  time_ms: number;
+  tool: string;
+  project: string | null;
+  detail: string;
+}
+export const mcpActivityList = (limit?: number) =>
+  invoke<McpActivityEntry[]>("mcp_activity_list", { limit });
+export const mcpActivityClear = () => invoke<void>("mcp_activity_clear");
 
 // --- SSH local-forward tunnels ---
 export interface TunnelInfo {
