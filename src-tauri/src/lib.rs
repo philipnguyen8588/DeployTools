@@ -9,6 +9,7 @@ pub mod commands;
 pub mod compose;
 pub mod errors;
 pub mod ftp;
+pub mod logstore;
 pub mod mcp;
 pub mod models;
 pub mod rsync;

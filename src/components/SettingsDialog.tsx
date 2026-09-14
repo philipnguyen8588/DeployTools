@@ -734,7 +734,10 @@ export function SettingsDialog({ onClose }: Props) {
                   </div>
                   <p className="text-[11px] text-muted-foreground">
                     Every action an AI agent performs via MCP (connect, sync,
-                    upload, run_command…) is recorded here.
+                    upload, run_command…) is recorded here. Stored as plaintext{" "}
+                    <code className="font-mono">mcp-activity.jsonl</code> /{" "}
+                    <code className="font-mono">terminal-history.jsonl</code>{" "}
+                    next to your vault file.
                   </p>
                   {activity !== null &&
                     (activity.length === 0 ? (

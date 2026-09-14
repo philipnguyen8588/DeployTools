@@ -203,7 +203,7 @@ pub async fn mcp_activity_list(
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<crate::models::McpActivityEntry>> {
-    let mut list = state.vault.read(|d| d.mcp_activity.clone()).await?;
+    let mut list = crate::logstore::read_activity(&state.app);
     list.sort_by(|a, b| b.time_ms.cmp(&a.time_ms));
     if let Some(l) = limit {
         list.truncate(l);
@@ -213,5 +213,5 @@ pub async fn mcp_activity_list(
 
 #[tauri::command]
 pub async fn mcp_activity_clear(state: State<'_, AppState>) -> AppResult<()> {
-    state.vault.write(|d| d.mcp_activity.clear()).await
+    crate::logstore::write_activity(&state.app, &[]).map_err(|e| crate::errors::AppError::Io(e.to_string()))
 }

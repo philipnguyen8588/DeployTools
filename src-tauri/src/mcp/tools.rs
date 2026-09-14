@@ -160,17 +160,13 @@ async fn log_activity(app: &AppHandle, tool: &str, args: &Value, result: &AppRes
         project,
         detail,
     };
-    let _ = app
-        .state::<AppState>()
-        .vault
-        .write(move |d| {
-            d.mcp_activity.push(entry);
-            let len = d.mcp_activity.len();
-            if len > 1000 {
-                d.mcp_activity.drain(0..len - 1000);
-            }
-        })
-        .await;
+    let mut items = crate::logstore::read_activity(app);
+    items.push(entry);
+    let len = items.len();
+    if len > 1000 {
+        items.drain(0..len - 1000);
+    }
+    let _ = crate::logstore::write_activity(app, &items);
 }
 
 async fn dispatch(app: &AppHandle, name: &str, args: Value) -> AppResult<String> {

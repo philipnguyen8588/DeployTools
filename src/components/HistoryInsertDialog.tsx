@@ -127,7 +127,7 @@ export function HistoryInsertDialog({ serverId, onInsert, onClose }: Props) {
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="w-[92vw] max-w-5xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <HistoryIcon className="h-5 w-5 text-primary" />
@@ -186,22 +186,22 @@ export function HistoryInsertDialog({ serverId, onInsert, onClose }: Props) {
                       }}
                       onMouseEnter={() => setSelected(i)}
                       className={cn(
-                        "flex cursor-pointer items-center gap-3 border-b px-3 py-2 transition last:border-b-0",
+                        "flex cursor-pointer items-start gap-3 border-b px-3 py-2 transition last:border-b-0",
                         selected === i
                           ? "bg-accent"
                           : "hover:bg-accent/60",
                       )}
                       title={new Date(h.time_ms).toLocaleString()}
                     >
-                      <span className="w-20 shrink-0 text-[10px] text-muted-foreground">
+                      <span className="mt-0.5 w-20 shrink-0 text-[10px] text-muted-foreground">
                         {formatRelative(h.time_ms)}
                       </span>
                       {h.source === "mcp" && (
-                        <span className="shrink-0 rounded bg-primary/15 px-1 py-0 text-[9px] font-semibold uppercase leading-4 text-primary">
+                        <span className="mt-0.5 shrink-0 rounded bg-primary/15 px-1 py-0 text-[9px] font-semibold uppercase leading-4 text-primary">
                           MCP
                         </span>
                       )}
-                      <code className="min-w-0 flex-1 truncate font-mono text-xs">
+                      <code className="min-w-0 flex-1 whitespace-pre-wrap break-all font-mono text-xs leading-relaxed">
                         {h.command}
                       </code>
                     </li>
