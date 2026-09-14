@@ -216,16 +216,7 @@ pub async fn upload(
         .await
         .map_err(|e| AppError::Sftp(format!("open remote: {e}")))?;
 
-    let local_md = tokio::fs::metadata(local_path).await?;
-    let total = local_md.len();
-    // Capture the local mtime so we can stamp it onto the remote after
-    // writing — this keeps incremental sync (which compares mtimes) from
-    // re-uploading unchanged files every run (rsync's `-t` behaviour).
-    let local_mtime_secs: Option<u32> = local_md
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as u32);
+    let total = tokio::fs::metadata(local_path).await?.len();
     let mut local = tokio::fs::File::open(local_path).await?;
     let mut buf = vec![0u8; 64 * 1024];
     let mut written: u64 = 0;
@@ -266,17 +257,13 @@ pub async fn upload(
         .flush()
         .await
         .map_err(|e| AppError::Sftp(format!("flush: {e}")))?;
-    drop(remote);
-
-    // Preserve the local modification time on the remote copy.
-    if let Some(secs) = local_mtime_secs {
-        let attrs = FileAttributes {
-            atime: Some(secs),
-            mtime: Some(secs),
-            ..Default::default()
-        };
-        let _ = sftp.set_metadata(remote_path, attrs).await;
-    }
+    // Close the remote handle deterministically (awaited), so the write is
+    // fully committed before we return. Relying on `Drop` here would fire
+    // an un-awaited close and race anything that touches the file next.
+    remote
+        .shutdown()
+        .await
+        .map_err(|e| AppError::Sftp(format!("close: {e}")))?;
 
     activity::success(
         &session.app,

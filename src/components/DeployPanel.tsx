@@ -115,8 +115,7 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
         <div className="space-y-1.5">
           <div>
             This will upload every new or changed local file via SFTP,
-            skipping files already up to date (same size and not newer
-            than the server copy).
+            skipping files whose size already matches the server.
           </div>
           {deleteExtraneous && (
             <div className="rounded border border-destructive/50 bg-destructive/10 px-2 py-1 text-sm text-destructive">

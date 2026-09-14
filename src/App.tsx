@@ -78,6 +78,7 @@ const HelpDialog = lazy(() =>
 
 import { useVault } from "./stores/vault";
 import { useSessions } from "./stores/sessions";
+import { useMcpBridge } from "./lib/useMcpBridge";
 import { cn } from "./lib/utils";
 import * as api from "./lib/api";
 import { useServers } from "./stores/servers";
@@ -87,6 +88,8 @@ import { useView } from "./stores/view";
 export default function App() {
   const { unlocked, lock } = useVault();
   const { tabs, activeId } = useSessions();
+  // Reflect MCP-driven sessions in the UI (open/drop tabs).
+  useMcpBridge();
   const { refresh: refreshServers } = useServers();
   const { refresh: refreshProjects } = useProjects();
   const view = useView((s) => s.view);

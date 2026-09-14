@@ -4,7 +4,7 @@
 //! `AppHandle` via `app.state::<AppState>()`.
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
@@ -19,10 +19,15 @@ pub fn list() -> Value {
     );
     json!([
         tool("status", "Report whether the app vault is unlocked and which projects currently have a live SSH session.", schema(json!({}), &[])),
-        tool("list_projects", "List configured projects: name, server host, local path and remote path.", schema(json!({}), &[])),
+        tool("list_projects", "List configured projects: name, server (display name only — host/IP is never exposed), local path and remote path.", schema(json!({}), &[])),
         tool("connect_project", "Open (or reuse) an SSH session for the named project.", project_only.clone()),
         tool("disconnect_project", "Close the SSH session(s) for the named project.", project_only.clone()),
         tool("git_changed_files", "List the working-tree changes (git status) for the project's local repo.", project_only.clone()),
+        tool(
+            "list_excludes",
+            "List the exclude patterns for a project and how sync treats them. Excluded files are NEVER uploaded by sync and NEVER deleted by sync_and_delete, so they are fully protected (e.g. add '.env' or '*.env' to protect env files). Call this before sync/sync_and_delete to confirm sensitive files are covered.",
+            project_only.clone(),
+        ),
         tool(
             "upload_changed_files",
             "Upload the project's git working-tree changes to the server via SFTP. Optionally restrict to a subset of relative paths.",
@@ -34,8 +39,16 @@ pub fn list() -> Value {
                 &["project"],
             ),
         ),
-        tool("sync", "Upload every new or changed file to the server (native SFTP sync, no deletion).", project_only.clone()),
-        tool("sync_and_delete", "Sync to the server AND delete remote files that no longer exist locally. Destructive.", project_only.clone()),
+        tool(
+            "sync",
+            "Upload every new or changed file to the server (native SFTP sync, no deletion). Files matching the project's exclude patterns are NEVER uploaded, so excluded files (e.g. .env) are not overwritten on the server. Use list_excludes to see the patterns.",
+            project_only.clone(),
+        ),
+        tool(
+            "sync_and_delete",
+            "Sync to the server AND delete remote files that no longer exist locally. Excluded files are never uploaded AND never deleted — they are fully protected. NON-excluded remote files missing locally are permanently deleted, and non-excluded local files overwrite the remote copy. Call list_excludes first to confirm sensitive files (e.g. .env) are excluded.",
+            project_only.clone(),
+        ),
         tool(
             "list_commits",
             "List recent git commits for the project.",
@@ -88,6 +101,10 @@ pub fn list() -> Value {
 /// Dispatch a `tools/call`. Returns the text payload (Ok) or an error
 /// message (Err) — the protocol layer wraps both into MCP content.
 pub async fn call(app: &AppHandle, name: &str, args: Value) -> Result<String, String> {
+    // Flash a "MCP is working on <project>" signal in the UI (StatusBar).
+    if let Some(project) = args.get("project").and_then(|v| v.as_str()) {
+        let _ = app.emit("mcp://active", json!({ "project": project, "tool": name }));
+    }
     dispatch(app, name, args).await.map_err(|e| e.to_string())
 }
 
@@ -98,6 +115,7 @@ async fn dispatch(app: &AppHandle, name: &str, args: Value) -> AppResult<String>
         "connect_project" => connect(app, &arg_str(&args, "project")?).await,
         "disconnect_project" => disconnect(app, &arg_str(&args, "project")?).await,
         "git_changed_files" => git_changed(app, &arg_str(&args, "project")?).await,
+        "list_excludes" => list_excludes(app, &arg_str(&args, "project")?).await,
         "upload_changed_files" => {
             upload_changed(app, &arg_str(&args, "project")?, arg_list(&args, "files")).await
         }
@@ -166,13 +184,14 @@ async fn list_projects(app: &AppHandle) -> AppResult<String> {
     let out: Vec<Value> = projects
         .iter()
         .map(|p| {
-            let host = servers
+            // Only expose the server's display name — never its host/IP.
+            let server = servers
                 .iter()
                 .find(|s| s.id == p.server_id)
-                .map(|s| s.host.clone());
+                .map(|s| s.name.clone());
             json!({
                 "name": p.name,
-                "server_host": host,
+                "server": server,
                 "local_path": p.local_path,
                 "remote_path": p.remote_path,
             })
@@ -198,7 +217,8 @@ async fn disconnect(app: &AppHandle, project_name: &str) -> AppResult<String> {
         .collect();
     let mut closed = 0;
     for id in sessions {
-        crate::commands::session::close_session(id, app.state()).await?;
+        crate::commands::session::close_session(id.clone(), app.state()).await?;
+        let _ = app.emit("mcp://session-closed", json!({ "session_id": id }));
         closed += 1;
     }
     Ok(pretty(json!({ "disconnected": closed, "project": project.name })))
@@ -208,6 +228,32 @@ async fn git_changed(app: &AppHandle, project_name: &str) -> AppResult<String> {
     let project = find_project(app, project_name).await?;
     let files = crate::commands::git::git_status(project.id, app.state()).await?;
     Ok(pretty(serde_json::to_value(&files)?))
+}
+
+async fn list_excludes(app: &AppHandle, project_name: &str) -> AppResult<String> {
+    let project = find_project(app, project_name).await?;
+    let baseline: Vec<String> = crate::commands::deploy::baseline_excludes()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    // Effective = baseline + project patterns, de-duplicated (order kept).
+    let mut effective: Vec<String> = Vec::new();
+    for p in baseline.iter().chain(project.excludes.iter()) {
+        if !effective.contains(p) {
+            effective.push(p.clone());
+        }
+    }
+    Ok(pretty(json!({
+        "project": project.name,
+        "project_excludes": project.excludes,
+        "baseline_excludes": baseline,
+        "effective": effective,
+        "behavior": {
+            "sync": "Files matching any effective pattern are NEVER uploaded — the remote copy is left untouched.",
+            "sync_and_delete": "Excluded files are never uploaded AND never deleted on the remote — fully protected. Non-excluded remote files missing locally are permanently deleted.",
+            "matching": "A pattern matches if it equals the full relative path OR any single path segment. So '.env' protects a file/dir named .env at any depth; use '*.env' for names like foo.env."
+        }
+    })))
 }
 
 async fn upload_changed(
@@ -349,6 +395,28 @@ async fn ensure_session(app: &AppHandle, name: &str) -> AppResult<(Project, Stri
     let summary =
         crate::commands::session::open_session(project.server_id, Some(project.id), app.state())
             .await?;
+
+    // Tell the UI to open a tab for this MCP-created session so the agent's
+    // terminals / Activity / progress render exactly like a manual connect.
+    let server_name = crate::commands::server::list_servers(app.state())
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|s| s.id == project.server_id)
+        .map(|s| s.name);
+    let label = match server_name {
+        Some(name) if !name.is_empty() => format!("{name} · {}", project.name),
+        _ => project.name.clone(),
+    };
+    let _ = app.emit(
+        "mcp://session-opened",
+        json!({
+            "session": serde_json::to_value(&summary).unwrap_or(Value::Null),
+            "label": label,
+            "remote_path": project.remote_path,
+        }),
+    );
+
     Ok((project, summary.id))
 }
 

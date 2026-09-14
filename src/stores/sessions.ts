@@ -28,6 +28,8 @@ export interface OpenTab {
   lastActivityAt: number;
   /** Human message shown in the disconnected overlay. */
   disconnectReason: string | null;
+  /** Who opened this tab — "mcp" tabs get a badge in the TabBar. */
+  origin?: "manual" | "mcp";
 }
 
 interface SessionsState {
@@ -35,6 +37,9 @@ interface SessionsState {
   activeId: string | null;
   openTab: (tab: Omit<OpenTab, "status" | "lastActivityAt" | "disconnectReason">) => void;
   closeTab: (sessionId: string) => Promise<void>;
+  /** Remove a tab from the UI WITHOUT closing the backend session (it was
+   *  already closed elsewhere, e.g. by the MCP server). */
+  dropTab: (sessionId: string) => void;
   setActive: (sessionId: string) => void;
   updateRemotePath: (sessionId: string, path: string) => void;
   updateLocalPath: (sessionId: string, path: string) => void;
@@ -84,6 +89,16 @@ export const useSessions = create<SessionsState>((set, get) => ({
       return { tabs, activeId: nextActive };
     });
   },
+
+  dropTab: (sessionId) =>
+    set((s) => {
+      const tabs = s.tabs.filter((t) => t.session.id !== sessionId);
+      const nextActive =
+        s.activeId === sessionId
+          ? tabs[tabs.length - 1]?.session.id ?? null
+          : s.activeId;
+      return { tabs, activeId: nextActive };
+    }),
 
   setActive: (sessionId) => set({ activeId: sessionId }),
 

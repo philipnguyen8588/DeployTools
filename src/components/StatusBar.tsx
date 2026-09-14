@@ -12,6 +12,7 @@ import {
   Fingerprint,
   FolderTree,
   GitBranch,
+  Bot,
 } from "lucide-react";
 
 import * as api from "@/lib/api";
@@ -47,6 +48,28 @@ export function StatusBar() {
     const t = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  // "MCP is working" indicator — driven by `mcp://active` events. Shows
+  // the project + tool an AI agent is currently touching, auto-hiding a
+  // few seconds after the last event.
+  const [mcpActive, setMcpActive] = useState<{
+    project: string;
+    tool: string;
+    at: number;
+  } | null>(null);
+  useEffect(() => {
+    let un: UnlistenFn | null = null;
+    (async () => {
+      un = await listen<{ project: string; tool: string }>(
+        "mcp://active",
+        (e) => setMcpActive({ ...e.payload, at: Date.now() }),
+      );
+    })();
+    return () => {
+      un?.();
+    };
+  }, []);
+  const mcpVisible = mcpActive != null && nowMs - mcpActive.at < 5000;
 
   // Bytes transferred — accumulate from sftp-progress events for the
   // active session. Resets when the active session changes.
@@ -223,6 +246,19 @@ export function StatusBar() {
       )}
 
       <div className="flex-1" />
+
+      {/* MCP activity — an AI agent is driving the app right now. */}
+      {mcpVisible && mcpActive && (
+        <Item
+          icon={<Bot className="h-3 w-3 animate-pulse text-primary" />}
+          tooltip={`MCP agent is running "${mcpActive.tool}" on ${mcpActive.project}`}
+          className="text-primary"
+        >
+          <span className="max-w-[28ch] truncate">
+            MCP: {mcpActive.project} · {mcpActive.tool}
+          </span>
+        </Item>
+      )}
 
       {/* Right-aligned app-level state */}
       <Item

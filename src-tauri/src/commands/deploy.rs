@@ -18,11 +18,6 @@ use std::time::SystemTime;
 use tauri::Emitter;
 use tokio::sync::Mutex;
 
-/// Clock-skew tolerance (seconds) when comparing local vs remote mtimes
-/// during sync. A file is re-uploaded when sizes differ, or when the
-/// local and remote mtimes differ by more than this margin.
-const MTIME_TOLERANCE_SECS: u64 = 2;
-
 /// Progress payload emitted on `deploy-progress://{job_id}` as files are
 /// transferred, so the UI can render "done / total".
 #[derive(Serialize, Clone)]
@@ -371,7 +366,7 @@ pub async fn download_to(
 }
 
 /// Native SFTP sync — a pure-Rust "rsync-lite" that works without any
-/// external binary. Compares local and remote trees by size + mtime and
+/// external binary. Compares local and remote trees by byte size and
 /// uploads only what changed. Optionally deletes remote files that no
 /// longer exist locally (`delete_extraneous`).
 ///
@@ -435,31 +430,14 @@ pub async fn deploy_sync(
             continue;
         }
         let r = remote_map.get(rel);
+        // Compare by byte size only. This is the long-stable behaviour:
+        // safe and never mutates remote metadata. Same-size content edits
+        // aren't caught here — use git-based upload (`upload_changed_files`)
+        // for precise content-aware uploads.
         let needs_upload = match r {
             None => true,
             Some(r) if r.is_dir => true, // file vs dir mismatch — replace
-            Some(r) => {
-                // Different size → definitely changed. Same size → only
-                // re-upload if the local copy is clearly NEWER than the
-                // remote, which catches size-preserving edits. A small
-                // tolerance absorbs clock skew between the two machines
-                // (remote mtime is set to the server's upload time).
-                if r.size != lentry.size {
-                    true
-                } else {
-                    // Same size — re-upload only if the mtimes differ by
-                    // more than the tolerance. Because upload() stamps the
-                    // local mtime onto the remote, unchanged files match
-                    // and are skipped, while size-preserving edits (which
-                    // bump the local mtime) are caught.
-                    match (lentry.mtime, r.mtime) {
-                        (Some(lm), Some(rm)) => {
-                            (lm as i64 - rm as i64).abs() > MTIME_TOLERANCE_SECS as i64
-                        }
-                        _ => false,
-                    }
-                }
-            }
+            Some(r) => r.size != lentry.size,
         };
         if needs_upload {
             to_upload.push(rel.clone());
@@ -1193,7 +1171,7 @@ fn remote_basename(p: &str) -> &str {
 /// that should never be uploaded to — nor deleted from — a server. This
 /// protects existing projects (created before a pattern was in the
 /// defaults) from destructive sync-delete on e.g. `__pycache__`.
-fn baseline_excludes() -> &'static [&'static str] {
+pub fn baseline_excludes() -> &'static [&'static str] {
     &["__pycache__", "*.pyc", "*.pyo", ".git"]
 }
 

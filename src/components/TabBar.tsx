@@ -1,4 +1,4 @@
-import { X, Plug } from "lucide-react";
+import { X, Plug, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSessions } from "@/stores/sessions";
 
@@ -36,6 +36,15 @@ export function TabBar() {
               )}
             />
             <span className="truncate">{t.label}</span>
+            {t.origin === "mcp" && (
+              <span
+                title="Opened by an AI agent via MCP"
+                className="flex shrink-0 items-center gap-0.5 rounded bg-primary/15 px-1 py-0 text-[9px] font-semibold uppercase leading-4 text-primary"
+              >
+                <Bot className="h-2.5 w-2.5" />
+                MCP
+              </span>
+            )}
             <button
               aria-label="Close tab"
               onClick={(e) => {
