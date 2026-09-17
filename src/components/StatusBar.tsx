@@ -240,26 +240,9 @@ export function StatusBar() {
           )}
 
           {/* Session uptime */}
-          <Sep />
-          <Item
-            icon={<Clock className="h-3 w-3" />}
-            tooltip="Session uptime"
-          >
-            {formatDuration(nowMs - active.session.opened_at)}
-          </Item>
-
-          {/* Bytes transferred this session */}
-          <Sep />
-          <Item icon={<ArrowUp className="h-3 w-3" />} tooltip="Uploaded">
-            {formatBytes(bytesUp)}
-          </Item>
-          <Item icon={<ArrowDown className="h-3 w-3" />} tooltip="Downloaded">
-            {formatBytes(bytesDown)}
-          </Item>
-
           {/* Disk usage of the primary filesystem — loaded once on connect.
               Shown as a mini progress bar (green → amber → red) like the
-              Resources tab. */}
+              Resources tab, with free space alongside. */}
           {primaryDisk && (
             <>
               <Sep />
@@ -268,7 +251,7 @@ export function StatusBar() {
                 title={(disks ?? [])
                   .map(
                     (d) =>
-                      `${d.mount}  ${formatBytes(d.used_kb * 1024)} / ${formatBytes(d.total_kb * 1024)} (${d.total_kb > 0 ? Math.round((d.used_kb / d.total_kb) * 100) : 0}%)`,
+                      `${d.mount}  ${formatBytes(d.used_kb * 1024)} / ${formatBytes(d.total_kb * 1024)} (${d.total_kb > 0 ? Math.round((d.used_kb / d.total_kb) * 100) : 0}%) · ${formatBytes((d.total_kb - d.used_kb) * 1024)} free`,
                   )
                   .join("\n")}
               >
@@ -295,10 +278,31 @@ export function StatusBar() {
                     style={{ width: `${diskPercent}%` }}
                   />
                 </div>
-                <span className="font-mono">{diskPercent}%</span>
+                <span className="font-mono">
+                  {diskPercent}% ·{" "}
+                  {formatBytes(
+                    (primaryDisk.total_kb - primaryDisk.used_kb) * 1024,
+                  )}{" "}
+                  free
+                </span>
               </div>
             </>
           )}
+
+          {/* Bytes transferred this session — near the end, next to uptime */}
+          <Sep />
+          <Item icon={<ArrowUp className="h-3 w-3" />} tooltip="Uploaded">
+            {formatBytes(bytesUp)}
+          </Item>
+          <Item icon={<ArrowDown className="h-3 w-3" />} tooltip="Downloaded">
+            {formatBytes(bytesDown)}
+          </Item>
+
+          {/* Session uptime — last */}
+          <Sep />
+          <Item icon={<Clock className="h-3 w-3" />} tooltip="Session uptime">
+            {formatDuration(nowMs - active.session.opened_at)}
+          </Item>
         </>
       ) : (
         <Item

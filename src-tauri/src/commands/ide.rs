@@ -12,11 +12,11 @@
 //!   "intellij"     → JetBrains IntelliJ IDEA (idea64.exe)
 //!   "antigravity"  → Google Antigravity (antigravity.exe)
 //!
-//! Detection is Windows-focused because the app ships Windows-first.
-//! On other OSes we just return an empty map and rely on the user
-//! setting paths explicitly.
+//! Detection is cross-platform: Windows (Program Files / LocalAppData /
+//! JetBrains Toolbox), macOS (`/Applications` + `~/Applications` app
+//! bundles + Toolbox under Application Support) and a best-effort set of
+//! common Linux paths. The user can always override any path in Settings.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -224,7 +224,7 @@ pub fn open_ide(key: String, project_path: String) -> AppResult<()> {
     Ok(())
 }
 
-// ----- detection (Windows-focused) -----
+// ----- detection (cross-platform) -----
 
 fn detect_one(key: &str) -> Option<String> {
     let candidates = candidate_paths(key);
@@ -242,6 +242,7 @@ fn detect_one(key: &str) -> Option<String> {
     }
 }
 
+#[cfg(target_os = "windows")]
 fn candidate_paths(key: &str) -> Vec<String> {
     let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
     let program_files = std::env::var("ProgramFiles").unwrap_or_else(|_| {
@@ -286,10 +287,86 @@ fn candidate_paths(key: &str) -> Vec<String> {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn candidate_paths(key: &str) -> Vec<String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    // For each "<App>.app/…" tail, look in both /Applications and the
+    // per-user ~/Applications (where JetBrains Toolbox drops shortcuts).
+    let apps = |tail: &str| -> Vec<String> {
+        let mut v = vec![format!("/Applications/{tail}")];
+        if !home.is_empty() {
+            v.push(format!("{home}/Applications/{tail}"));
+        }
+        v
+    };
+
+    match key {
+        "vscode" => {
+            let mut v = apps("Visual Studio Code.app/Contents/Resources/app/bin/code");
+            v.extend(apps("Cursor.app/Contents/Resources/app/bin/cursor"));
+            v.extend(apps("VSCodium.app/Contents/Resources/app/bin/codium"));
+            v
+        }
+        "pycharm" => {
+            let mut v = apps("PyCharm.app/Contents/MacOS/pycharm");
+            v.extend(apps("PyCharm Professional Edition.app/Contents/MacOS/pycharm"));
+            v.extend(apps("PyCharm CE.app/Contents/MacOS/pycharm"));
+            v.extend(apps("PyCharm Community Edition.app/Contents/MacOS/pycharm"));
+            v
+        }
+        "intellij" => {
+            let mut v = apps("IntelliJ IDEA.app/Contents/MacOS/idea");
+            v.extend(apps("IntelliJ IDEA Ultimate.app/Contents/MacOS/idea"));
+            v.extend(apps("IntelliJ IDEA CE.app/Contents/MacOS/idea"));
+            v.extend(apps("IntelliJ IDEA Community Edition.app/Contents/MacOS/idea"));
+            v
+        }
+        "antigravity" => {
+            let mut v = apps("Antigravity.app/Contents/MacOS/Antigravity");
+            v.extend(apps("Antigravity.app/Contents/MacOS/Electron"));
+            v.extend(apps("Antigravity.app/Contents/Resources/app/bin/antigravity"));
+            v
+        }
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn candidate_paths(key: &str) -> Vec<String> {
+    // Best-effort Linux paths: PATH-installed launchers + snap/flatpak.
+    match key {
+        "vscode" => vec![
+            "/usr/bin/code".into(),
+            "/usr/local/bin/code".into(),
+            "/snap/bin/code".into(),
+            "/usr/bin/cursor".into(),
+            "/usr/bin/codium".into(),
+        ],
+        "pycharm" => vec![
+            "/usr/local/bin/pycharm".into(),
+            "/snap/bin/pycharm-professional".into(),
+            "/snap/bin/pycharm-community".into(),
+            "/opt/pycharm/bin/pycharm.sh".into(),
+        ],
+        "intellij" => vec![
+            "/usr/local/bin/idea".into(),
+            "/snap/bin/intellij-idea-ultimate".into(),
+            "/snap/bin/intellij-idea-community".into(),
+            "/opt/idea/bin/idea.sh".into(),
+        ],
+        "antigravity" => vec![
+            "/usr/bin/antigravity".into(),
+            "/usr/local/bin/antigravity".into(),
+        ],
+        _ => Vec::new(),
+    }
+}
+
 /// Walk `%LOCALAPPDATA%\JetBrains\Toolbox\apps\<app>\ch-<n>\<build>\bin\`
 /// to find an installed JetBrains IDE. The Toolbox layout changes
 /// across versions; we just pick the first `*.exe` matching the
 /// conventional binary name.
+#[cfg(target_os = "windows")]
 fn detect_jetbrains_toolbox(key: &str) -> Option<String> {
     let local = std::env::var("LOCALAPPDATA").ok()?;
     let root = PathBuf::from(&local).join("JetBrains\\Toolbox\\apps");
@@ -319,4 +396,47 @@ fn detect_jetbrains_toolbox(key: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// macOS JetBrains Toolbox stores installs under
+/// `~/Library/Application Support/JetBrains/Toolbox/apps/…`. The nesting
+/// depth varies across Toolbox versions, so we recursively hunt for a
+/// `*.app` bundle containing `Contents/MacOS/<exe>`.
+#[cfg(target_os = "macos")]
+fn detect_jetbrains_toolbox(key: &str) -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let root = PathBuf::from(&home)
+        .join("Library/Application Support/JetBrains/Toolbox/apps");
+    let exe = match key {
+        "pycharm" => "pycharm",
+        "intellij" => "idea",
+        _ => return None,
+    };
+    find_toolbox_app(&root, exe, 5)
+}
+
+#[cfg(target_os = "macos")]
+fn find_toolbox_app(dir: &Path, exe: &str, depth: u32) -> Option<String> {
+    if depth == 0 {
+        return None;
+    }
+    for e in std::fs::read_dir(dir).ok()?.flatten() {
+        let p = e.path();
+        if e.file_name().to_string_lossy().ends_with(".app") {
+            let cand = p.join("Contents/MacOS").join(exe);
+            if cand.is_file() {
+                return Some(cand.to_string_lossy().into_owned());
+            }
+        } else if p.is_dir() {
+            if let Some(found) = find_toolbox_app(&p, exe, depth - 1) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn detect_jetbrains_toolbox(_key: &str) -> Option<String> {
+    None
 }

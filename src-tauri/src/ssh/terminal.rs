@@ -5,7 +5,8 @@
 //! 2. Request an xterm-256color PTY with the given cols/rows.
 //! 3. Request a shell.
 //! 4. If the session was opened for a project with `remote_path`, send
-//!    `cd "<remote_path>" && clear\n` as the first input.
+//!    `cd '<remote_path>' 2>/dev/null; clear\n` as the first input, so the
+//!    shell lands in the project dir with a clean screen (no echoed `cd`).
 //! 5. Spawn a background task that:
 //!      - Reads outbound user input from an mpsc channel → `channel.data()`
 //!      - Reads channel data → emits `term://<terminal_id>` events
@@ -58,9 +59,14 @@ pub async fn open(
     // from the server (MOTD / last-login banner / first prompt) has been
     // forwarded to the UI. Sending it any earlier races the banner and
     // the user never sees "Welcome to Ubuntu …" on screen.
+    // We append `clear` so the echoed `cd …` command line (and the racey
+    // double-echo from sending input before PS1 is fully painted) is wiped,
+    // leaving a clean prompt already in the project directory. `clear`
+    // (modern ncurses) also drops scrollback via the \033[3J it emits;
+    // `printf '\033c'` is a portable fallback for boxes without `clear`.
     let init_cmd: Option<String> = session.project.as_ref().map(|project| {
         let quoted = crate::ssh::quote::shell_single_quote(&project.remote_path);
-        format!("cd {quoted} 2>/dev/null\n")
+        format!("cd {quoted} 2>/dev/null; {{ clear || printf '\\033c'; }} 2>/dev/null\n")
     });
 
     // Spawn the driver task.

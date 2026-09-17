@@ -340,10 +340,10 @@ export function MetricsPanel({ sessionId, active }: Props) {
                 key={d.mount + d.fs}
                 className="flex items-center gap-2 text-xs"
               >
-                <span className="w-24 truncate font-mono" title={d.mount}>
+                <span className="w-20 shrink-0 truncate font-mono" title={d.mount}>
                   {d.mount}
                 </span>
-                <div className="h-1 flex-1 overflow-hidden rounded bg-muted">
+                <div className="h-1 min-w-0 flex-1 overflow-hidden rounded bg-muted">
                   <div
                     className={cn(
                       "h-full",
@@ -356,10 +356,10 @@ export function MetricsPanel({ sessionId, active }: Props) {
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <span className="w-24 text-right font-mono text-muted-foreground">
+                <span className="shrink-0 whitespace-nowrap text-right font-mono text-muted-foreground">
                   {formatBytes(d.used_kb * 1024)} / {formatBytes(d.total_kb * 1024)}
                 </span>
-                <span className="w-10 text-right font-mono">{pct}%</span>
+                <span className="w-10 shrink-0 text-right font-mono">{pct}%</span>
               </div>
             );
           })}

@@ -216,16 +216,54 @@ fn spawn_terminal(cwd: Option<&str>, run: Option<&str>) -> AppResult<()> {
 
     #[cfg(target_os = "macos")]
     {
-        let mut cmd = Command::new("open");
-        cmd.arg("-a").arg("Terminal");
-        if let Some(dir) = cwd {
-            cmd.arg(dir);
+        // No command to run → just open a plain interactive Terminal
+        // (optionally at `cwd`). `open -a Terminal <dir>` opens a shell in
+        // that directory.
+        if run.is_none() {
+            let mut cmd = Command::new("open");
+            cmd.arg("-a").arg("Terminal");
+            if let Some(dir) = cwd {
+                cmd.arg(dir);
+            }
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|e| AppError::Other(format!("spawn terminal: {e}")))?;
+            return Ok(());
         }
-        // macOS `open -a Terminal` doesn't easily accept a command — we
-        // ignore `run` for now. Power users can paste the command.
-        let _ = run;
-        cmd.spawn()
-            .map_err(|e| AppError::Other(format!("spawn terminal: {e}")))?;
+
+        // We DO have a command (e.g. an ssh invocation). `open -a Terminal`
+        // can't take a command directly, and driving Terminal via
+        // AppleScript needs Automation permission. Instead we write a
+        // throwaway executable `.command` script and `open` it — macOS runs
+        // .command files in Terminal, no special permission required.
+        let mut script_cmd = String::new();
+        if let Some(dir) = cwd {
+            script_cmd.push_str(&format!("cd {} && ", shell_single_quote(dir)));
+        }
+        script_cmd.push_str(run.unwrap());
+
+        let tmp = std::env::temp_dir().join(format!(
+            "dt-term-{}.command",
+            chrono::Utc::now().timestamp_millis()
+        ));
+        std::fs::write(&tmp, format!("#!/bin/bash\n{script_cmd}\n"))
+            .map_err(|e| AppError::Other(format!("write terminal script: {e}")))?;
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(
+                &tmp,
+                std::fs::Permissions::from_mode(0o755),
+            );
+        }
+        Command::new("open")
+            .arg(&tmp)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| AppError::Other(format!("open terminal script: {e}")))?;
         return Ok(());
     }
 
@@ -265,6 +303,13 @@ fn spawn_terminal(cwd: Option<&str>, run: Option<&str>) -> AppResult<()> {
 fn _require_supported_os(_cwd: Option<&str>, _run: Option<&str>) -> AppResult<()> {
     let _ = (_cwd, _run);
     Ok(())
+}
+
+/// Wrap a path in single quotes for safe use in a POSIX shell command,
+/// escaping any embedded single quotes.
+#[cfg(target_os = "macos")]
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 // Small `which` shim because pulling the full `which` crate for 2 callers
