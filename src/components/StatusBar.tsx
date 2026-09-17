@@ -5,11 +5,9 @@ import {
   Server as ServerIcon,
   ShieldCheck,
   ShieldOff,
-  TerminalSquare,
   Clock,
   ArrowUp,
   ArrowDown,
-  Fingerprint,
   FolderTree,
   GitBranch,
   Bot,
@@ -213,51 +211,36 @@ export function StatusBar() {
 
           {/* Project mapping — local → remote */}
           {project && (
-            <Item
-              icon={<FolderTree className="h-3 w-3" />}
-              tooltip="Project mapping (local ↔ remote)"
-            >
-              <span className="font-mono max-w-[32ch] truncate">
-                {project.name}
-              </span>
-            </Item>
+            <>
+              <Sep />
+              <Item
+                icon={<FolderTree className="h-3 w-3" />}
+                tooltip="Project mapping (local ↔ remote)"
+              >
+                <span className="font-mono max-w-[32ch] truncate">
+                  {project.name}
+                </span>
+              </Item>
+            </>
           )}
 
           {/* Current git branch of the project's local repo */}
           {gitBranch && (
-            <Item
-              icon={<GitBranch className="h-3 w-3 text-primary" />}
-              tooltip={
-                gitHead
-                  ? `Local branch · HEAD ${gitHead}`
-                  : "Local branch"
-              }
-            >
-              <span className="font-mono">{gitBranch}</span>
-            </Item>
+            <>
+              <Sep />
+              <Item
+                icon={<GitBranch className="h-3 w-3 text-primary" />}
+                tooltip={
+                  gitHead ? `Local branch · HEAD ${gitHead}` : "Local branch"
+                }
+              >
+                <span className="font-mono">{gitBranch}</span>
+              </Item>
+            </>
           )}
-
-          {/* Fingerprint — last 12 chars; hover shows full */}
-          {active.session.fingerprint && (
-            <Item
-              icon={<Fingerprint className="h-3 w-3" />}
-              tooltip={active.session.fingerprint}
-            >
-              <span className="font-mono">
-                …{active.session.fingerprint.slice(-12)}
-              </span>
-            </Item>
-          )}
-
-          {/* Active terminals count */}
-          <Item
-            icon={<TerminalSquare className="h-3 w-3" />}
-            tooltip="Open terminal channels in this session"
-          >
-            {active.session.terminal_count}
-          </Item>
 
           {/* Session uptime */}
+          <Sep />
           <Item
             icon={<Clock className="h-3 w-3" />}
             tooltip="Session uptime"
@@ -266,6 +249,7 @@ export function StatusBar() {
           </Item>
 
           {/* Bytes transferred this session */}
+          <Sep />
           <Item icon={<ArrowUp className="h-3 w-3" />} tooltip="Uploaded">
             {formatBytes(bytesUp)}
           </Item>
@@ -273,37 +257,47 @@ export function StatusBar() {
             {formatBytes(bytesDown)}
           </Item>
 
-          {/* Disk usage of the primary filesystem — loaded once on connect */}
+          {/* Disk usage of the primary filesystem — loaded once on connect.
+              Shown as a mini progress bar (green → amber → red) like the
+              Resources tab. */}
           {primaryDisk && (
-            <Item
-              icon={
+            <>
+              <Sep />
+              <div
+                className="flex items-center gap-1.5 whitespace-nowrap"
+                title={(disks ?? [])
+                  .map(
+                    (d) =>
+                      `${d.mount}  ${formatBytes(d.used_kb * 1024)} / ${formatBytes(d.total_kb * 1024)} (${d.total_kb > 0 ? Math.round((d.used_kb / d.total_kb) * 100) : 0}%)`,
+                  )
+                  .join("\n")}
+              >
                 <HardDrive
                   className={cn(
                     "h-3 w-3",
-                    diskPercent >= 90
+                    diskPercent > 90
                       ? "text-destructive"
-                      : diskPercent >= 75
+                      : diskPercent > 75
                         ? "text-yellow-500"
                         : "",
                   )}
                 />
-              }
-              tooltip={
-                disks && disks.length > 1
-                  ? disks
-                      .map(
-                        (d) =>
-                          `${d.mount}  ${formatBytes(d.used_kb * 1024)} / ${formatBytes(d.total_kb * 1024)} (${d.total_kb > 0 ? Math.round((d.used_kb / d.total_kb) * 100) : 0}%)`,
-                      )
-                      .join("\n")
-                  : `Disk ${primaryDisk.mount}: used / total`
-              }
-            >
-              <span className="font-mono">
-                {formatBytes(primaryDisk.used_kb * 1024)} /{" "}
-                {formatBytes(primaryDisk.total_kb * 1024)} ({diskPercent}%)
-              </span>
-            </Item>
+                <div className="h-1.5 w-16 overflow-hidden rounded bg-muted">
+                  <div
+                    className={cn(
+                      "h-full",
+                      diskPercent > 90
+                        ? "bg-destructive"
+                        : diskPercent > 75
+                          ? "bg-yellow-500"
+                          : "bg-primary",
+                    )}
+                    style={{ width: `${diskPercent}%` }}
+                  />
+                </div>
+                <span className="font-mono">{diskPercent}%</span>
+              </div>
+            </>
           )}
         </>
       ) : (
@@ -338,6 +332,7 @@ export function StatusBar() {
         {servers.length} servers · {tabs.length} open
       </Item>
 
+      <Sep />
       <Item
         icon={
           unlocked ? (
@@ -352,6 +347,11 @@ export function StatusBar() {
       </Item>
     </footer>
   );
+}
+
+/** Thin vertical divider between status-bar items. */
+function Sep() {
+  return <span className="select-none text-border" aria-hidden>|</span>;
 }
 
 function Item({

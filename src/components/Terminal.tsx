@@ -328,19 +328,52 @@ export function Terminal({
           onTerminalReady?.(null);
         });
 
-        // Local line buffer used to capture history: we accumulate every
-        // char the user types and commit the line to `history_add` when
-        // they press Enter. We swallow ANSI escape sequences (arrow keys,
-        // Home/End, function keys, bracketed-paste markers, …) with a tiny
-        // state machine so junk like "[A[A" (up-arrow) never lands in the
-        // history. Readline line-editing (moving the cursor mid-line) still
-        // isn't reconstructed — we just keep the entry legible.
+        // Terminal-history capture. We commit a line to `history_add` when
+        // the user presses Enter. Two sources, in priority order:
+        //   1. The RENDERED line read straight from the xterm buffer — this
+        //      captures whatever is actually on screen, including commands
+        //      recalled with ↑/↓ or completed with Tab (the shell echoes
+        //      those, so they're in the buffer even though we never typed
+        //      the characters ourselves).
+        //   2. A keystroke buffer as a fallback for the case where the
+        //      chars were typed + Entered in the same input chunk (the
+        //      shell hasn't echoed them into the buffer yet).
+        // For (1) we track `lineStartCol` = the cursor column right after
+        // the prompt, so we can strip the prompt from the rendered line.
         let historyBuf = "";
+        let lineStartCol: number | null = null;
         // "none" = normal, "esc" = saw ESC, "csi" = inside a CSI/SS3 seq.
         let escState: "none" | "esc" | "csi" = "none";
+
+        // Reconstruct the full logical input line at the cursor, joining
+        // any wrapped continuation rows.
+        const readLogicalLine = (): string => {
+          const buf = term.buffer.active;
+          let start = buf.baseY + buf.cursorY;
+          while (start > 0 && buf.getLine(start)?.isWrapped) start--;
+          let out = "";
+          for (let row = start; ; row++) {
+            const l = buf.getLine(row);
+            if (!l) break;
+            out += l.translateToString(false);
+            const next = buf.getLine(row + 1);
+            if (next && next.isWrapped) continue;
+            break;
+          }
+          return out.replace(/\s+$/, "");
+        };
+
         const commitHistory = () => {
-          const line = historyBuf.trim();
+          // Prefer the on-screen line (catches ↑/↓ recall + Tab-complete).
+          let line = "";
+          if (lineStartCol != null) {
+            const full = readLogicalLine();
+            if (lineStartCol <= full.length) line = full.slice(lineStartCol);
+          }
+          if (!line.trim()) line = historyBuf; // fallback: what we typed
+          line = line.trim();
           historyBuf = "";
+          lineStartCol = null;
           if (!serverId) return;
           if (!line || /[\x00-\x08\x0b-\x1a\x1c-\x1f]/.test(line)) return;
           void api.historyAdd(serverId, line).catch(() => {});
@@ -349,6 +382,11 @@ export function Terminal({
         term.onData((data) => {
           if (terminalIdRef.current) {
             bump();
+            // First interaction on a fresh line: remember where input
+            // begins (= prompt width) so we can strip the prompt later.
+            if (lineStartCol == null) {
+              lineStartCol = term.buffer.active.cursorX;
+            }
             // Update the local history buffer before forwarding to the PTY.
             for (const ch of data) {
               // --- ANSI escape-sequence swallowing ---
@@ -374,8 +412,9 @@ export function Terminal({
               } else if (ch === "\x7f" || ch === "\b") {
                 historyBuf = historyBuf.slice(0, -1);
               } else if (ch === "\x03") {
-                // Ctrl+C aborts the current line — drop buffer.
+                // Ctrl+C aborts the current line — drop buffers.
                 historyBuf = "";
+                lineStartCol = null;
               } else if (ch >= " " || ch === "\t") {
                 historyBuf += ch;
               }

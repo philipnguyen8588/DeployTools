@@ -61,12 +61,24 @@ export async function runDeployJob(
   try {
     const summary = await run({ jobId, cancelled: () => cancelled });
     if (cancelled) {
-      toast.info(`${label} cancelled`, { id: toastId, duration: 4000 });
+      toast.info(`${label} cancelled`, { id: toastId, duration: 4000, action: undefined });
     } else {
-      toast.success(summary, { id: toastId, duration: Infinity, closeButton: true });
+      // Done — drop the Cancel action and auto-dismiss after 30s (still
+      // has a close button if the user wants it gone sooner).
+      toast.success(summary, {
+        id: toastId,
+        duration: 30_000,
+        closeButton: true,
+        action: undefined,
+      });
     }
   } catch (e) {
-    toast.error(`${e}`, { id: toastId, duration: Infinity, closeButton: true });
+    toast.error(`${e}`, {
+      id: toastId,
+      duration: 30_000,
+      closeButton: true,
+      action: undefined,
+    });
   } finally {
     unlisten();
   }
