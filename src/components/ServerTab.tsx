@@ -1,6 +1,6 @@
 import { PanelGroup, Panel, PanelResizeHandle } from "react-resizable-panels";
-import { useMemo, useState } from "react";
-import { PlugZap, Loader2 } from "lucide-react";
+import { Suspense, lazy, useMemo, useState } from "react";
+import { PlugZap, Loader2, FolderTree, GitBranch } from "lucide-react";
 import { toast } from "sonner";
 
 import { RemoteFileBrowser } from "./RemoteFileBrowser";
@@ -8,8 +8,15 @@ import { LocalFileBrowser } from "./LocalFileBrowser";
 import { DeployPanel } from "./DeployPanel";
 import { BottomPanel } from "./BottomPanel";
 import { Button } from "./ui/button";
+import { cn } from "@/lib/utils";
 import { useProjects } from "@/stores/projects";
 import { useSessions, type OpenTab } from "@/stores/sessions";
+
+// Git moved up next to the file browsers — lazy so its chunk only loads
+// when the user opens the Git tab.
+const GitPanel = lazy(() =>
+  import("./GitPanel").then((m) => ({ default: m.GitPanel })),
+);
 
 interface Props {
   tab: OpenTab;
@@ -35,6 +42,9 @@ export function ServerTab({ tab, isActive = true }: Props) {
   const { projects } = useProjects();
   const { updateRemotePath, updateLocalPath, reconnect } = useSessions();
   const [reconnecting, setReconnecting] = useState(false);
+  /** Top-area tab: file browsers vs the Git panel (same level, above the
+   *  terminal). Git is only available when the session has a project. */
+  const [topTab, setTopTab] = useState<"files" | "git">("files");
 
   const project = useMemo(
     () => projects.find((p) => p.id === tab.session.project_id) ?? null,
@@ -83,38 +93,97 @@ export function ServerTab({ tab, isActive = true }: Props) {
           <Panel
             id="browsers"
             order={1}
-            defaultSize={30}
+            defaultSize={35}
             minSize={15}
             collapsible
           >
-            <PanelGroup direction="horizontal">
-              <Panel defaultSize={50} minSize={20}>
-                <LocalFileBrowser
-                  sessionId={tab.session.id}
-                  projectId={project?.id ?? null}
-                  remoteBase={project?.remote_path ?? "/"}
-                  localBase={project?.local_path ?? ""}
-                  relativePath={tab.localPath}
-                  onRelativePathChange={(p) => updateLocalPath(tab.session.id, p)}
-                />
-              </Panel>
-              <PanelResizeHandle className="w-px bg-border hover:bg-primary/50" />
-              <Panel defaultSize={50} minSize={20}>
-                <RemoteFileBrowser
-                  sessionId={tab.session.id}
-                  path={tab.remotePath}
-                  onPathChange={(p) => updateRemotePath(tab.session.id, p)}
-                  projectId={project?.id ?? null}
-                  projectRemoteBase={project?.remote_path ?? null}
-                />
-              </Panel>
-            </PanelGroup>
+            <div className="flex h-full flex-col">
+              {/* Tab strip — Files / Git (Git only when the session has a
+                  project). */}
+              {project && (
+                <div className="flex shrink-0 items-center gap-0.5 border-b bg-card px-2 py-1">
+                  <TopTabBtn
+                    active={topTab === "files"}
+                    onClick={() => setTopTab("files")}
+                    Icon={FolderTree}
+                  >
+                    Files
+                  </TopTabBtn>
+                  <TopTabBtn
+                    active={topTab === "git"}
+                    onClick={() => setTopTab("git")}
+                    Icon={GitBranch}
+                  >
+                    Git
+                  </TopTabBtn>
+                </div>
+              )}
+
+              <div className="relative min-h-0 flex-1">
+                {/* Files — ALWAYS mounted + laid out (never display:none),
+                    so the PanelGroup keeps its sizes and the browsers keep
+                    their scroll/selection state. Git overlays it opaquely. */}
+                <div className="absolute inset-0">
+                  <PanelGroup direction="horizontal">
+                    <Panel defaultSize={50} minSize={20}>
+                      <LocalFileBrowser
+                        sessionId={tab.session.id}
+                        projectId={project?.id ?? null}
+                        remoteBase={project?.remote_path ?? "/"}
+                        localBase={project?.local_path ?? ""}
+                        relativePath={tab.localPath}
+                        onRelativePathChange={(p) =>
+                          updateLocalPath(tab.session.id, p)
+                        }
+                      />
+                    </Panel>
+                    <PanelResizeHandle className="w-px bg-border hover:bg-primary/50" />
+                    <Panel defaultSize={50} minSize={20}>
+                      <RemoteFileBrowser
+                        sessionId={tab.session.id}
+                        path={tab.remotePath}
+                        onPathChange={(p) =>
+                          updateRemotePath(tab.session.id, p)
+                        }
+                        projectId={project?.id ?? null}
+                        projectRemoteBase={project?.remote_path ?? null}
+                      />
+                    </Panel>
+                  </PanelGroup>
+                </div>
+
+                {/* Git — opaque overlay, shown only on the Git tab. */}
+                {project && (
+                  <div
+                    className={cn(
+                      "absolute inset-0 bg-background",
+                      topTab === "git" ? "block" : "hidden",
+                    )}
+                  >
+                    <Suspense
+                      fallback={
+                        <div className="grid h-full place-items-center text-xs text-muted-foreground">
+                          Loading…
+                        </div>
+                      }
+                    >
+                      <GitPanel
+                        projectId={project.id}
+                        sessionId={tab.session.id}
+                        remoteBase={project.remote_path ?? "/"}
+                        visible={topTab === "git"}
+                      />
+                    </Suspense>
+                  </div>
+                )}
+              </div>
+            </div>
           </Panel>
 
           <PanelResizeHandle className="h-px bg-border hover:bg-primary/50" />
 
           {/* BOTTOM: Terminals + Activity tabs — the default-dominant pane. */}
-          <Panel id="bottom" order={2} defaultSize={70} minSize={20}>
+          <Panel id="bottom" order={2} defaultSize={65} minSize={20}>
             <BottomPanel
               sessionId={tab.session.id}
               serverId={tab.session.server_id}
@@ -162,5 +231,32 @@ export function ServerTab({ tab, isActive = true }: Props) {
         </div>
       )}
     </div>
+  );
+}
+
+function TopTabBtn({
+  active,
+  onClick,
+  Icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  Icon: React.ComponentType<{ className?: string }>;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-1 rounded px-2 py-0.5 text-xs transition",
+        active
+          ? "bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {children}
+    </button>
   );
 }

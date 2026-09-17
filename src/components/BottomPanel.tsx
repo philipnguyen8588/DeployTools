@@ -4,7 +4,6 @@ import {
   X,
   TerminalSquare,
   ScrollText,
-  GitBranch,
   Container,
   Cog,
   Cable,
@@ -41,9 +40,6 @@ const HistoryInsertDialog = lazy(() =>
 
 // The rest are lazy — they only load when the user activates the tab,
 // trimming the initial JS heap considerably on app start.
-const GitPanel = lazy(() =>
-  import("./GitPanel").then((m) => ({ default: m.GitPanel })),
-);
 const DockerPanel = lazy(() =>
   import("./DockerPanel").then((m) => ({ default: m.DockerPanel })),
 );
@@ -74,7 +70,6 @@ interface Props {
 
 type TabKind =
   | "terminal"
-  | "git"
   | "docker"
   | "services"
   | "resources"
@@ -90,7 +85,9 @@ interface BottomTab {
 /**
  * Bottom panel layout. Tab order is:
  *
- *   Terminal 1 | Terminal 2 | … | [+]  |  Git  |  Docker  |  Services  |  Resources  |  Activity
+ *   Terminal 1 | Terminal 2 | … | [+]  |  Docker  |  Resources  |  Tunnels  |  Activity  |  Services
+ *
+ * (Git lives at the top level next to the file browsers — see ServerTab.)
  *
  * Terminal tabs are first so they're the default landing. The "+" button
  * creates another terminal in the same SSH session (new shell channel —
@@ -101,7 +98,6 @@ export function BottomPanel({
   sessionId,
   serverId,
   projectId,
-  projectRemoteBase,
   protocol = "ssh",
   isActive = true,
 }: Props) {
@@ -299,7 +295,7 @@ export function BottomPanel({
   // SSH sessions get the full tab suite; FTP/FTPS only get Activity
   // (no terminal, no Docker, no metrics — these all need a shell).
   //
-  // Ordering by frequency of use: Terminal → Git → Docker → Resources →
+  // Ordering by frequency of use: Terminal → Docker → Resources →
   // Activity → Services. "Services" (systemd unit list) sits last as
   // it's rarely touched during day-to-day deploys.
   const ordered: BottomTab[] = isSsh
@@ -310,10 +306,7 @@ export function BottomPanel({
           label: t.label,
         })),
         ...(projectId
-          ? [
-              { kind: "git" as const, id: "git", label: "Git" },
-              { kind: "docker" as const, id: "docker", label: "Docker" },
-            ]
+          ? [{ kind: "docker" as const, id: "docker", label: "Docker" }]
           : []),
         { kind: "resources" as const, id: "resources", label: "Resources" },
         { kind: "tunnels" as const, id: "tunnels", label: "Tunnels" },
@@ -510,16 +503,6 @@ export function BottomPanel({
           </div>
         ))}
 
-        {projectId && visited.has("git") && (
-          <LazyPane visible={active === "git"}>
-            <GitPanel
-              projectId={projectId}
-              sessionId={sessionId}
-              remoteBase={projectRemoteBase ?? "/"}
-              visible={active === "git"}
-            />
-          </LazyPane>
-        )}
         {projectId && visited.has("docker") && (
           <LazyPane visible={active === "docker"}>
             <DockerPanel
@@ -687,8 +670,6 @@ function iconFor(kind: TabKind) {
   switch (kind) {
     case "terminal":
       return TerminalSquare;
-    case "git":
-      return GitBranch;
     case "docker":
       return Container;
     case "services":
