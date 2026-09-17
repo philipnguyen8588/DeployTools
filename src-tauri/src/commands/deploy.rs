@@ -87,6 +87,27 @@ pub async fn cancel_deploy(job_id: String, state: State<'_, AppState>) -> AppRes
     Ok(())
 }
 
+/// Upload one project-relative file to its mapped remote path (with an
+/// escape guard). Shared by `deploy_file` and `deploy_files`.
+async fn upload_one(
+    project: &Project,
+    session: &Arc<SshSession>,
+    relative_path: &str,
+) -> AppResult<()> {
+    let local_full = project.local_path.join(relative_path);
+    let canon_local = tokio::fs::canonicalize(&local_full).await?;
+    let canon_base = tokio::fs::canonicalize(&project.local_path).await?;
+    if !canon_local.starts_with(&canon_base) {
+        return Err(AppError::InvalidPath(format!(
+            "path escapes project root: {relative_path}"
+        )));
+    }
+    let remote_rel = relative_path.replace('\\', "/");
+    let remote_full = join_remote(&project.remote_path, &remote_rel);
+    sftp::validate_remote_path(&remote_full)?;
+    sftp::upload(session, &local_full, &remote_full).await
+}
+
 /// Deploy a single file via SFTP.
 ///
 /// `relative_path` is relative to `project.local_path`. The corresponding
@@ -99,30 +120,50 @@ pub async fn deploy_file(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let (project, server) = resolve_project_server(&state, project_id).await?;
-
-    // Resolve local absolute path and guard against escapes.
-    let local_full = project.local_path.join(&relative_path);
-    let canon_local = tokio::fs::canonicalize(&local_full).await?;
-    let canon_base = tokio::fs::canonicalize(&project.local_path).await?;
-    if !canon_local.starts_with(&canon_base) {
-        return Err(AppError::InvalidPath(format!(
-            "path escapes project root: {}",
-            relative_path
-        )));
-    }
-
-    let remote_rel = relative_path.replace('\\', "/");
-    let remote_full = join_remote(&project.remote_path, &remote_rel);
-    sftp::validate_remote_path(&remote_full)?;
-
-    // Reuse an existing session if one was passed, otherwise open a
-    // short-lived one just for this upload.
     let session = match session_id {
         Some(id) => state.sessions.get(&id)?,
         None => open_ephemeral(&state, &server, Some(project.clone())).await?,
     };
+    upload_one(&project, &session, &relative_path).await
+}
 
-    sftp::upload(&session, &local_full, &remote_full).await
+/// Upload an explicit list of project-relative files, emitting per-file
+/// progress on `deploy-progress://{job_id}` and honouring `cancel_deploy`.
+/// Used by the Git panel (Changes / commit files) so its upload toast has
+/// the same count + Cancel UX as the rest of the app. Returns files sent.
+#[tauri::command]
+pub async fn deploy_files(
+    project_id: Uuid,
+    relative_paths: Vec<String>,
+    session_id: Option<String>,
+    job_id: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<u32> {
+    let (project, server) = resolve_project_server(&state, project_id).await?;
+    let session = match session_id {
+        Some(id) => state.sessions.get(&id)?,
+        None => open_ephemeral(&state, &server, Some(project.clone())).await?,
+    };
+    let cancel = CancelGuard::new(state.inner(), job_id.clone());
+    let total = relative_paths.len() as u32;
+    let mut uploaded = 0u32;
+    for rel in &relative_paths {
+        if cancel.cancelled() {
+            break;
+        }
+        if let Err(e) = upload_one(&project, &session, rel).await {
+            crate::ssh::activity::error(
+                &state.app,
+                "sftp",
+                format!("✗ {rel}: {e}"),
+                Some(&session.id),
+            );
+            return Err(e);
+        }
+        uploaded += 1;
+        emit_progress(&state.app, &job_id, uploaded, total, rel);
+    }
+    Ok(uploaded)
 }
 
 /// Recursively upload a local directory to its mirrored remote path.

@@ -116,6 +116,7 @@ pub fn run() {
             commands::sftp::sftp_download,
             // Deploy
             commands::deploy::deploy_file,
+            commands::deploy::deploy_files,
             commands::deploy::deploy_folder,
             commands::deploy::deploy_rsync,
             commands::deploy::deploy_sync,

@@ -156,7 +156,9 @@ export function ServerTab({ tab, isActive = true }: Props) {
                 {project && (
                   <div
                     className={cn(
-                      "absolute inset-0 bg-background",
+                      // z-20 so it covers the file table's sticky header
+                      // (z-10) that would otherwise bleed over the overlay.
+                      "absolute inset-0 z-20 bg-background",
                       topTab === "git" ? "block" : "hidden",
                     )}
                   >

@@ -132,6 +132,18 @@ export const deployFile = (
     relativePath,
     sessionId: sessionId ?? null,
   });
+export const deployFiles = (
+  projectId: UUID,
+  relativePaths: string[],
+  sessionId?: string | null,
+  jobId?: string | null,
+) =>
+  invoke<number>("deploy_files", {
+    projectId,
+    relativePaths,
+    sessionId: sessionId ?? null,
+    jobId: jobId ?? null,
+  });
 export const deployFolder = (
   projectId: UUID,
   relativePath: string,

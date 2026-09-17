@@ -16,6 +16,7 @@ import type { GitCommit, GitFile, GitInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { useConfirm } from "./ConfirmDialog";
+import { runDeployJob } from "@/lib/deployJob";
 
 interface Props {
   projectId: string;
@@ -26,8 +27,6 @@ interface Props {
    *  file list whenever the user switches back to it. */
   visible?: boolean;
 }
-
-type Tab = "changes" | "commits";
 
 /**
  * Git integration for the active project.
@@ -46,7 +45,6 @@ export function GitPanel({
   visible = true,
 }: Props) {
   const [info, setInfo] = useState<GitInfo | null>(null);
-  const [tab, setTab] = useState<Tab>("changes");
 
   const refreshInfo = useCallback(async () => {
     try {
@@ -86,14 +84,6 @@ export function GitPanel({
     <div className="flex h-full flex-col">
       {/* Header — branch + head */}
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs">
-        <div className="flex gap-0.5">
-          <TabBtn active={tab === "changes"} onClick={() => setTab("changes")}>
-            Changes
-          </TabBtn>
-          <TabBtn active={tab === "commits"} onClick={() => setTab("commits")}>
-            Commits
-          </TabBtn>
-        </div>
         <GitBranch className="h-3.5 w-3.5 text-primary" />
         <span className="font-mono font-medium">{info.branch ?? "HEAD"}</span>
         {info.head_short && (
@@ -104,48 +94,36 @@ export function GitPanel({
         <div className="flex-1" />
       </div>
 
-      <div className="min-h-0 flex-1">
-        {tab === "changes" ? (
-          <ChangesView
-            projectId={projectId}
-            sessionId={sessionId}
-            remoteBase={remoteBase}
-            visible={visible}
-          />
-        ) : (
-          <CommitsView
-            projectId={projectId}
-            sessionId={sessionId}
-            remoteBase={remoteBase}
-            visible={visible}
-          />
-        )}
+      {/* Two columns: Changes (left) and Commits (right), shown together. */}
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col border-r">
+          <div className="shrink-0 border-b bg-muted/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Changes
+          </div>
+          <div className="min-h-0 flex-1">
+            <ChangesView
+              projectId={projectId}
+              sessionId={sessionId}
+              remoteBase={remoteBase}
+              visible={visible}
+            />
+          </div>
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="shrink-0 border-b bg-muted/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Commits
+          </div>
+          <div className="min-h-0 flex-1">
+            <CommitsView
+              projectId={projectId}
+              sessionId={sessionId}
+              remoteBase={remoteBase}
+              visible={visible}
+            />
+          </div>
+        </div>
       </div>
     </div>
-  );
-}
-
-function TabBtn({
-  children,
-  active,
-  onClick,
-}: {
-  children: React.ReactNode;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "rounded px-2 py-0.5 text-xs transition",
-        active
-          ? "bg-primary text-primary-foreground"
-          : "text-muted-foreground hover:bg-accent hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -219,18 +197,15 @@ function ChangesView({
     });
     if (!ok) return;
 
+    const paths = uploadable.map((f) => f.relative_path);
     setBusy(true);
-    const id = toast.loading(`Uploading ${uploadable.length} files…`);
-    let done = 0;
     try {
-      for (const f of uploadable) {
-        await api.deployFile(projectId, f.relative_path, sessionId);
-        done += 1;
-      }
-      toast.success(`✓ Uploaded ${done} file(s)`, { id });
+      await runDeployJob(`Uploading ${paths.length} file(s)`, async ({ jobId }) => {
+        const n = await api.deployFiles(projectId, paths, sessionId, jobId);
+        return `✓ Uploaded ${n} file(s)`;
+      });
       setSelected(new Set());
-    } catch (e) {
-      toast.error(`${e} (after ${done} uploads)`, { id });
+      void refresh();
     } finally {
       setBusy(false);
     }
@@ -243,10 +218,10 @@ function ChangesView({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b bg-muted/30 p-1.5 text-xs">
+      <div className="flex shrink-0 items-center gap-1.5 border-b bg-card p-1.5 text-xs">
         <button
           onClick={toggleAll}
-          className="rounded p-1 hover:bg-accent"
+          className="shrink-0 rounded p-1 hover:bg-accent"
           title={allChecked ? "Deselect all" : "Select all"}
         >
           {allChecked ? (
@@ -257,19 +232,26 @@ function ChangesView({
         </button>
         <Button
           size="sm"
+          className="shrink-0"
           disabled={busy || uploadable.length === 0}
           onClick={uploadSelected}
         >
           <Upload className="mr-1 h-3.5 w-3.5" />
           Upload {uploadable.length > 0 ? `(${uploadable.length})` : ""}
         </Button>
-        <Button size="sm" variant="ghost" onClick={refresh} disabled={loading} title="Refresh">
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          className="shrink-0"
+          onClick={refresh}
+          disabled={loading}
+          title="Refresh"
+        >
           <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
-        <span className="text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate text-right text-muted-foreground">
           {files.length} changed · {selected.size} selected
         </span>
-        <div className="flex-1" />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -345,18 +327,19 @@ function CommitsView({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b bg-muted/30 p-1.5 text-xs text-muted-foreground">
+      <div className="flex shrink-0 items-center gap-1.5 border-b bg-card p-1.5 text-xs text-muted-foreground">
         <Button
           size="icon-sm"
           variant="ghost"
+          className="shrink-0"
           onClick={() => void refresh()}
           disabled={loading}
           title="Refresh"
         >
           <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
-        <GitCommitIcon className="h-3.5 w-3.5" />
-        <span className="flex-1">
+        <GitCommitIcon className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">
           {commits.length} commits · click one to see its files
         </span>
       </div>
@@ -465,17 +448,13 @@ function CommitFilesView({
     });
     if (!ok) return;
 
+    const paths = uploadable.map((f) => f.relative_path);
     setBusy(true);
-    const id = toast.loading(`Uploading ${uploadable.length} files…`);
-    let done = 0;
     try {
-      for (const f of uploadable) {
-        await api.deployFile(projectId, f.relative_path, sessionId);
-        done += 1;
-      }
-      toast.success(`✓ Uploaded ${done} file(s)`, { id });
-    } catch (e) {
-      toast.error(`${e} (after ${done} uploads)`, { id });
+      await runDeployJob(`Uploading ${paths.length} file(s)`, async ({ jobId }) => {
+        const n = await api.deployFiles(projectId, paths, sessionId, jobId);
+        return `✓ Uploaded ${n} file(s)`;
+      });
     } finally {
       setBusy(false);
     }
@@ -483,13 +462,13 @@ function CommitFilesView({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b bg-muted/30 p-1.5 text-xs">
-        <Button size="sm" variant="ghost" onClick={onBack}>
-          ← Back
+      <div className="flex shrink-0 items-center gap-1.5 border-b bg-card p-1.5 text-xs">
+        <Button size="icon-sm" variant="ghost" className="shrink-0" onClick={onBack} title="Back">
+          ←
         </Button>
         <button
           onClick={toggleAll}
-          className="rounded p-1 hover:bg-accent"
+          className="shrink-0 rounded p-1 hover:bg-accent"
           title={allChecked ? "Deselect all" : "Select all"}
         >
           {allChecked ? (
@@ -500,16 +479,16 @@ function CommitFilesView({
         </button>
         <Button
           size="sm"
+          className="shrink-0"
           disabled={busy || uploadable.length === 0}
           onClick={uploadSelected}
         >
           <Upload className="mr-1 h-3.5 w-3.5" />
           Upload {uploadable.length > 0 ? `(${uploadable.length})` : ""}
         </Button>
-        <span className="truncate font-mono text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate text-right font-mono text-muted-foreground">
           {commit.short_hash} · {files.length} files · {selected.size} selected
         </span>
-        <div className="flex-1" />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
