@@ -94,33 +94,25 @@ export function GitPanel({
         <div className="flex-1" />
       </div>
 
-      {/* Two columns: Changes (left) and Commits (right), shown together. */}
+      {/* Two columns: Changes (left) and Commits (right), shown together.
+          Each column's toolbar doubles as its header (the column name lives
+          inline in the toolbar) so there's no separate label row. */}
       <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col border-r">
-          <div className="shrink-0 border-b bg-muted/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Changes
-          </div>
-          <div className="min-h-0 flex-1">
-            <ChangesView
-              projectId={projectId}
-              sessionId={sessionId}
-              remoteBase={remoteBase}
-              visible={visible}
-            />
-          </div>
+        <div className="min-h-0 min-w-0 flex-1 border-r">
+          <ChangesView
+            projectId={projectId}
+            sessionId={sessionId}
+            remoteBase={remoteBase}
+            visible={visible}
+          />
         </div>
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="shrink-0 border-b bg-muted/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Commits
-          </div>
-          <div className="min-h-0 flex-1">
-            <CommitsView
-              projectId={projectId}
-              sessionId={sessionId}
-              remoteBase={remoteBase}
-              visible={visible}
-            />
-          </div>
+        <div className="min-h-0 min-w-0 flex-1">
+          <CommitsView
+            projectId={projectId}
+            sessionId={sessionId}
+            remoteBase={remoteBase}
+            visible={visible}
+          />
         </div>
       </div>
     </div>
@@ -230,15 +222,25 @@ function ChangesView({
             <Square className="h-3.5 w-3.5" />
           )}
         </button>
-        <Button
-          size="sm"
-          className="shrink-0"
-          disabled={busy || uploadable.length === 0}
-          onClick={uploadSelected}
-        >
-          <Upload className="mr-1 h-3.5 w-3.5" />
-          Upload {uploadable.length > 0 ? `(${uploadable.length})` : ""}
-        </Button>
+        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Changes
+        </span>
+        {uploadable.length > 0 && (
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-6 shrink-0 gap-1 px-2 text-xs"
+            disabled={busy}
+            onClick={uploadSelected}
+            title="Upload selected files"
+          >
+            <Upload className="h-3.5 w-3.5" />
+            Upload {uploadable.length}
+          </Button>
+        )}
+        <span className="min-w-0 flex-1 truncate text-right text-muted-foreground">
+          {files.length} changed · {selected.size} selected
+        </span>
         <Button
           size="icon-sm"
           variant="ghost"
@@ -249,9 +251,6 @@ function ChangesView({
         >
           <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
-        <span className="min-w-0 flex-1 truncate text-right text-muted-foreground">
-          {files.length} changed · {selected.size} selected
-        </span>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -328,6 +327,13 @@ function CommitsView({
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-1.5 border-b bg-card p-1.5 text-xs text-muted-foreground">
+        <GitCommitIcon className="h-3.5 w-3.5 shrink-0" />
+        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide">
+          Commits
+        </span>
+        <span className="min-w-0 flex-1 truncate">
+          {commits.length} · click one to see its files
+        </span>
         <Button
           size="icon-sm"
           variant="ghost"
@@ -338,10 +344,6 @@ function CommitsView({
         >
           <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
-        <GitCommitIcon className="h-3.5 w-3.5 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">
-          {commits.length} commits · click one to see its files
-        </span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {loading ? (
@@ -477,15 +479,19 @@ function CommitFilesView({
             <Square className="h-3.5 w-3.5" />
           )}
         </button>
-        <Button
-          size="sm"
-          className="shrink-0"
-          disabled={busy || uploadable.length === 0}
-          onClick={uploadSelected}
-        >
-          <Upload className="mr-1 h-3.5 w-3.5" />
-          Upload {uploadable.length > 0 ? `(${uploadable.length})` : ""}
-        </Button>
+        {uploadable.length > 0 && (
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-6 shrink-0 gap-1 px-2 text-xs"
+            disabled={busy}
+            onClick={uploadSelected}
+            title="Upload selected files"
+          >
+            <Upload className="h-3.5 w-3.5" />
+            Upload {uploadable.length}
+          </Button>
+        )}
         <span className="min-w-0 flex-1 truncate text-right font-mono text-muted-foreground">
           {commit.short_hash} · {files.length} files · {selected.size} selected
         </span>
