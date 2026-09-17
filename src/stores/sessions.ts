@@ -36,6 +36,14 @@ interface SessionsState {
   tabs: OpenTab[];
   activeId: string | null;
   openTab: (tab: Omit<OpenTab, "status" | "lastActivityAt" | "disconnectReason">) => void;
+  /** Adopt an MCP-opened backend session: reuse the existing tab for the
+   *  same project (in-place reconnect) if there is one, else open a new
+   *  tab. Keeps MCP on a single tab per project across timeouts. */
+  adoptMcpSession: (args: {
+    session: SessionSummary;
+    label: string;
+    remotePath: string;
+  }) => void;
   closeTab: (sessionId: string) => Promise<void>;
   /** Remove a tab from the UI WITHOUT closing the backend session (it was
    *  already closed elsewhere, e.g. by the MCP server). */
@@ -74,6 +82,48 @@ export const useSessions = create<SessionsState>((set, get) => ({
         disconnectReason: null,
       };
       return { tabs: [...s.tabs, full], activeId: tab.session.id };
+    }),
+
+  adoptMcpSession: (args) =>
+    set((s) => {
+      const { session, label, remotePath } = args;
+      // Exact same session already open — just activate it.
+      if (s.tabs.some((t) => t.session.id === session.id)) {
+        return { activeId: session.id };
+      }
+      // Reuse an existing tab for the SAME project (e.g. one that went
+      // "disconnected" after a timeout): adopt the fresh backend session
+      // into it — an in-place reconnect — so MCP keeps using one tab.
+      const pid = session.project_id;
+      const idx = pid
+        ? s.tabs.findIndex((t) => t.session.project_id === pid)
+        : -1;
+      if (idx >= 0) {
+        const tabs = s.tabs.slice();
+        const prev = tabs[idx];
+        tabs[idx] = {
+          ...prev,
+          session,
+          status: "connected",
+          lastActivityAt: Date.now(),
+          disconnectReason: null,
+          origin: prev.origin ?? "mcp",
+        };
+        return { tabs, activeId: session.id };
+      }
+      // No tab for this project — the user closed it by hand. Open a new
+      // one.
+      const full: OpenTab = {
+        session,
+        label,
+        remotePath: remotePath || "/",
+        localPath: "",
+        status: "connected",
+        lastActivityAt: Date.now(),
+        disconnectReason: null,
+        origin: "mcp",
+      };
+      return { tabs: [...s.tabs, full], activeId: session.id };
     }),
 
   closeTab: async (sessionId) => {

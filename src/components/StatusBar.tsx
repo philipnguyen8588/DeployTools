@@ -13,9 +13,11 @@ import {
   FolderTree,
   GitBranch,
   Bot,
+  HardDrive,
 } from "lucide-react";
 
 import * as api from "@/lib/api";
+import type { DiskUsage } from "@/lib/types";
 import { useSessions } from "@/stores/sessions";
 import { useServers } from "@/stores/servers";
 import { useProjects } from "@/stores/projects";
@@ -109,6 +111,30 @@ export function StatusBar() {
     };
   }, [project?.id]);
 
+  // Disk usage of the connected server — loaded ONCE per connection (no
+  // polling). Refetched only when the active session id changes or it
+  // (re)enters the connected state, e.g. after a reconnect.
+  const [disks, setDisks] = useState<DiskUsage[] | null>(null);
+  const isConnected = active?.status === "connected";
+  const isSshSession = active?.session.protocol === "ssh";
+  useEffect(() => {
+    setDisks(null);
+    if (!active || !isConnected || !isSshSession) return;
+    const sid = active.session.id;
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await api.fetchDiskUsage(sid);
+        if (!cancelled) setDisks(d);
+      } catch {
+        /* server without df / non-Linux — silently omit */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [active?.session.id, isConnected, isSshSession]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     setBytesUp(0);
     setBytesDown(0);
@@ -140,6 +166,17 @@ export function StatusBar() {
       un?.();
     };
   }, [active?.session.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The filesystem to headline: prefer root `/`, else the largest by size.
+  const primaryDisk =
+    disks && disks.length > 0
+      ? (disks.find((d) => d.mount === "/") ??
+        [...disks].sort((a, b) => b.total_kb - a.total_kb)[0])
+      : null;
+  const diskPercent =
+    primaryDisk && primaryDisk.total_kb > 0
+      ? Math.round((primaryDisk.used_kb / primaryDisk.total_kb) * 100)
+      : 0;
 
   return (
     <footer className="flex h-6 shrink-0 items-center gap-3 border-t bg-card px-3 text-[11px] text-muted-foreground">
@@ -235,6 +272,39 @@ export function StatusBar() {
           <Item icon={<ArrowDown className="h-3 w-3" />} tooltip="Downloaded">
             {formatBytes(bytesDown)}
           </Item>
+
+          {/* Disk usage of the primary filesystem — loaded once on connect */}
+          {primaryDisk && (
+            <Item
+              icon={
+                <HardDrive
+                  className={cn(
+                    "h-3 w-3",
+                    diskPercent >= 90
+                      ? "text-destructive"
+                      : diskPercent >= 75
+                        ? "text-yellow-500"
+                        : "",
+                  )}
+                />
+              }
+              tooltip={
+                disks && disks.length > 1
+                  ? disks
+                      .map(
+                        (d) =>
+                          `${d.mount}  ${formatBytes(d.used_kb * 1024)} / ${formatBytes(d.total_kb * 1024)} (${d.total_kb > 0 ? Math.round((d.used_kb / d.total_kb) * 100) : 0}%)`,
+                      )
+                      .join("\n")
+                  : `Disk ${primaryDisk.mount}: used / total`
+              }
+            >
+              <span className="font-mono">
+                {formatBytes(primaryDisk.used_kb * 1024)} /{" "}
+                {formatBytes(primaryDisk.total_kb * 1024)} ({diskPercent}%)
+              </span>
+            </Item>
+          )}
         </>
       ) : (
         <Item

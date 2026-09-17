@@ -8,6 +8,7 @@ import type {
   CfDnsRecord,
   CfRecordInput,
   CfZone,
+  DiskUsage,
   DockerAction,
   DockerInfo,
   Metrics,
@@ -260,6 +261,10 @@ export const historyClear = (serverId: UUID) =>
 // --- Metrics ---
 export const fetchMetrics = (sessionId: string) =>
   invoke<Metrics>("fetch_metrics", { sessionId });
+
+/** Lightweight disk-only usage (just `df`) — used by the status bar. */
+export const fetchDiskUsage = (sessionId: string) =>
+  invoke<DiskUsage[]>("fetch_disk_usage", { sessionId });
 
 // --- Services (systemd) ---
 export const serviceList = (sessionId: string) =>

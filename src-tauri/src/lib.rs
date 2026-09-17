@@ -147,6 +147,7 @@ pub fn run() {
             commands::services::service_action,
             // Metrics
             commands::metrics::fetch_metrics,
+            commands::metrics::fetch_disk_usage,
             // Docker Compose
             commands::docker::docker_compose_info,
             commands::docker::docker_compose_ps,

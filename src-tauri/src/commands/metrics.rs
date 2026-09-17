@@ -113,6 +113,44 @@ docker ps --no-trunc --format '{{.ID}}	{{.Names}}' 2>/dev/null
     Ok(parse(&stdout))
 }
 
+/// Lightweight one-shot disk usage — just `df`, without the ~1s CPU
+/// sampling and `ps`/`docker` overhead of `fetch_metrics`. The status bar
+/// calls this once per connection to show disk usage.
+#[tauri::command]
+pub async fn fetch_disk_usage(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<DiskUsage>> {
+    let session = state.sessions.get(&session_id)?;
+    let script = "df -P -BK -x tmpfs -x devtmpfs -x squashfs 2>/dev/null | tail -n +2";
+    let argv = vec!["sh".to_string(), "-c".into(), script.to_string()];
+    let (stdout, _stderr, _code) =
+        exec::run_capturing(session, None, &argv, 64 * 1024).await?;
+    Ok(parse_df(stdout.lines()))
+}
+
+/// Parse `df -P -BK` rows (header already stripped) into `DiskUsage`.
+///   Filesystem  1K-blocks  Used  Available  Capacity  Mounted-on
+fn parse_df<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<DiskUsage> {
+    let mut disks = Vec::new();
+    for line in lines {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 6 {
+            let total: Option<u64> = parts[1].trim_end_matches('K').parse().ok();
+            let used: Option<u64> = parts[2].trim_end_matches('K').parse().ok();
+            if let (Some(total), Some(used)) = (total, used) {
+                disks.push(DiskUsage {
+                    mount: parts[5].to_string(),
+                    total_kb: total,
+                    used_kb: used,
+                    fs: parts[0].to_string(),
+                });
+            }
+        }
+    }
+    disks
+}
+
 fn parse(out: &str) -> Metrics {
     let mut m = Metrics {
         loadavg: None,
@@ -189,25 +227,7 @@ fn parse(out: &str) -> Metrics {
 
     // df
     if let Some(lines) = sections.get("DF") {
-        for line in lines {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 6 {
-                // Filesystem  1K-blocks  Used  Available  Capacity  Mounted
-                let total: Option<u64> = parts[1]
-                    .trim_end_matches('K')
-                    .parse()
-                    .ok();
-                let used: Option<u64> = parts[2].trim_end_matches('K').parse().ok();
-                if let (Some(total), Some(used)) = (total, used) {
-                    m.disks.push(DiskUsage {
-                        mount: parts[5].to_string(),
-                        total_kb: total,
-                        used_kb: used,
-                        fs: parts[0].to_string(),
-                    });
-                }
-            }
-        }
+        m.disks = parse_df(lines.iter().copied());
     }
 
     // cpu delta

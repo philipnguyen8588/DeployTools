@@ -31,14 +31,14 @@ export function useMcpBridge() {
           if (!alive) return;
           const { session, label, remote_path } = e.payload;
           const store = useSessions.getState();
-          store.openTab({
+          // Adopt into the existing tab for this project if one is open
+          // (e.g. a disconnected tab after a timeout) so MCP reuses one
+          // tab instead of piling up duplicates on every reconnect.
+          store.adoptMcpSession({
             session,
             label,
             remotePath: remote_path || "/",
-            localPath: "",
-            origin: "mcp",
           });
-          store.setActive(session.id);
           useView.getState().setView("tabs");
           toast.success(`MCP connected: ${label}`);
         }),
