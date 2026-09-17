@@ -211,6 +211,16 @@ function ChangesView({
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-1.5 border-b bg-card p-1.5 text-xs">
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          className="shrink-0"
+          onClick={refresh}
+          disabled={loading}
+          title="Refresh"
+        >
+          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+        </Button>
         <button
           onClick={toggleAll}
           className="shrink-0 rounded p-1 hover:bg-accent"
@@ -241,16 +251,6 @@ function ChangesView({
         <span className="min-w-0 flex-1 truncate text-right text-muted-foreground">
           {files.length} changed · {selected.size} selected
         </span>
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          className="shrink-0"
-          onClick={refresh}
-          disabled={loading}
-          title="Refresh"
-        >
-          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-        </Button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -327,13 +327,6 @@ function CommitsView({
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-1.5 border-b bg-card p-1.5 text-xs text-muted-foreground">
-        <GitCommitIcon className="h-3.5 w-3.5 shrink-0" />
-        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide">
-          Commits
-        </span>
-        <span className="min-w-0 flex-1 truncate">
-          {commits.length} · click one to see its files
-        </span>
         <Button
           size="icon-sm"
           variant="ghost"
@@ -344,6 +337,13 @@ function CommitsView({
         >
           <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
+        <GitCommitIcon className="h-3.5 w-3.5 shrink-0" />
+        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide">
+          Commits
+        </span>
+        <span className="min-w-0 flex-1 truncate">
+          {commits.length} · click one to see its files
+        </span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {loading ? (

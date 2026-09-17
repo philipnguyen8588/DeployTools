@@ -330,10 +330,14 @@ export function Terminal({
 
         // Local line buffer used to capture history: we accumulate every
         // char the user types and commit the line to `history_add` when
-        // they press Enter. Arrow keys / readline tricks aren't fully
-        // supported — we just strip obvious control bytes so the entry
-        // is legible.
+        // they press Enter. We swallow ANSI escape sequences (arrow keys,
+        // Home/End, function keys, bracketed-paste markers, …) with a tiny
+        // state machine so junk like "[A[A" (up-arrow) never lands in the
+        // history. Readline line-editing (moving the cursor mid-line) still
+        // isn't reconstructed — we just keep the entry legible.
         let historyBuf = "";
+        // "none" = normal, "esc" = saw ESC, "csi" = inside a CSI/SS3 seq.
+        let escState: "none" | "esc" | "csi" = "none";
         const commitHistory = () => {
           const line = historyBuf.trim();
           historyBuf = "";
@@ -347,6 +351,24 @@ export function Terminal({
             bump();
             // Update the local history buffer before forwarding to the PTY.
             for (const ch of data) {
+              // --- ANSI escape-sequence swallowing ---
+              if (escState === "esc") {
+                // ESC [ → CSI, ESC O → SS3 (both take a final byte); any
+                // other char is a short 2-byte escape we just drop.
+                escState = ch === "[" || ch === "O" ? "csi" : "none";
+                continue;
+              }
+              if (escState === "csi") {
+                // Skip parameter/intermediate bytes; a final byte in
+                // 0x40–0x7E (@ … ~) ends the sequence.
+                if (ch >= "\x40" && ch <= "\x7e") escState = "none";
+                continue;
+              }
+              if (ch === "\x1b") {
+                escState = "esc";
+                continue;
+              }
+              // --- normal editing ---
               if (ch === "\r" || ch === "\n") {
                 commitHistory();
               } else if (ch === "\x7f" || ch === "\b") {
