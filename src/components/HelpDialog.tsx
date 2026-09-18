@@ -38,7 +38,7 @@ export function HelpDialog({ onClose }: Props) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <HelpCircle className="h-5 w-5 text-primary" />
-            About Auto Deployment
+            About DeployTools
           </DialogTitle>
           <DialogDescription>
             A desktop tool to deploy web projects from local to remote

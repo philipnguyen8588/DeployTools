@@ -67,7 +67,7 @@ export function TitleBar({ rightSlot }: Props) {
         data-tauri-drag-region
         className="text-sm font-semibold tracking-tight"
       >
-        Auto Deployment
+        DeployTools
       </span>
 
       {/* Spacer that remains draggable. */}

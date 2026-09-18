@@ -73,7 +73,7 @@ export function UnlockDialog() {
             {isInit ? <ShieldCheck className="h-8 w-8" /> : <Lock className="h-8 w-8" />}
           </div>
           <h1 className="text-xl font-semibold">
-            {isInit ? "Set a master password" : "Unlock Auto Deployment"}
+            {isInit ? "Set a master password" : "Unlock DeployTools"}
           </h1>
           <p className="text-sm text-muted-foreground">
             {isInit

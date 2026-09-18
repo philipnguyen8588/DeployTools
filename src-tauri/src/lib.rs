@@ -1,4 +1,4 @@
-//! Auto Deployment — Tauri backend entry point.
+//! DeployTools — Tauri backend entry point.
 //!
 //! This library wires the Rust modules into Tauri command handlers,
 //! sets up logging, initializes the vault state, the SSH session pool,

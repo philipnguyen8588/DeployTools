@@ -64,7 +64,7 @@ jobs:
         with:
           # `__VERSION__` is replaced with the version from tauri.conf.json.
           tagName: ${{ github.ref_name }}
-          releaseName: "Auto Deployment __VERSION__"
+          releaseName: "DeployTools __VERSION__"
           releaseBody: "See the assets below to download and install this version."
           # On manual runs we have no tag, so publish as a draft instead.
           releaseDraft: ${{ github.event_name == 'workflow_dispatch' }}
