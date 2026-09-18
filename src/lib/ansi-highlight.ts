@@ -26,10 +26,20 @@
 const ESC = "\x1b";
 const RESET = `${ESC}[0m`;
 
-const SGR = {
-  ipv4: `${ESC}[36m`, // cyan
-  keywordError: `${ESC}[31m`, // red
-  keywordWarn: `${ESC}[33m`, // yellow
+/**
+ * Highlight colors as 24-bit SGR, chosen for contrast against the terminal
+ * background rather than the ANSI cyan/red/yellow (whose theme mapping is
+ * pale on a light background). Two sets: readable on dark vs on light.
+ */
+const SGR_DARK = {
+  ipv4: `${ESC}[38;2;56;189;248m`, // sky-400
+  keywordError: `${ESC}[38;2;248;113;113m`, // red-400
+  keywordWarn: `${ESC}[38;2;251;191;36m`, // amber-400
+} as const;
+const SGR_LIGHT = {
+  ipv4: `${ESC}[38;2;3;105;161m`, // sky-700
+  keywordError: `${ESC}[38;2;185;28;28m`, // red-700
+  keywordWarn: `${ESC}[38;2;180;83;9m`, // amber-700
 } as const;
 
 // Strict IPv4 (each octet 0-255) so we don't paint version strings like
@@ -54,6 +64,9 @@ export interface HighlightOpts {
   /** Whether colorization is active. State (escape/alt-screen tracking) is
    *  maintained regardless, so toggling mid-stream stays correct. */
   enabled?: boolean;
+  /** True when the terminal background is light — picks darker highlight
+   *  colors so IPs/keywords stay readable. */
+  light?: boolean;
 }
 
 export class AnsiHighlighter {
@@ -66,9 +79,11 @@ export class AnsiHighlighter {
   private inSgr = false;
   private keywordRe: RegExp | null = null;
   private enabled: boolean;
+  private light: boolean;
 
   constructor(private opts: HighlightOpts) {
     this.enabled = opts.enabled ?? true;
+    this.light = opts.light ?? false;
     this.setKeywords(opts.keywords);
   }
 
@@ -76,6 +91,11 @@ export class AnsiHighlighter {
    *  alt-screen state) always runs so state stays accurate across toggles. */
   setEnabled(v: boolean) {
     this.enabled = v;
+  }
+
+  /** Switch the highlight palette to match a light/dark terminal bg. */
+  setLight(v: boolean) {
+    this.light = v;
   }
 
   setKeywords(list: string[]) {
@@ -204,22 +224,29 @@ export class AnsiHighlighter {
       return;
     }
 
-    // SGR: ESC [ params m — track whether a non-reset color is active.
+    // SGR: ESC [ params m — track whether a non-reset color is active. A
+    // reset is an empty param OR one whose every code is a zero — this
+    // must include "00" / "0;0" etc., because bash's default colored
+    // prompt ends with `\x1b[00m`; treating that as "still colored" left
+    // inSgr stuck on and suppressed all later highlighting (IPs, keywords).
     if (final === "m") {
-      if (params === "" || params === "0") this.inSgr = false;
-      else this.inSgr = true;
+      const isReset = params
+        .split(";")
+        .every((c) => c === "" || Number(c) === 0);
+      this.inSgr = !isReset;
     }
   }
 
   /** Wrap IPv4 + keyword matches in SGR codes. Called only on plain text. */
   private colorize(run: string): string {
     const matches: Match[] = [];
+    const sgr = this.light ? SGR_LIGHT : SGR_DARK;
 
     if (this.opts.ipv4) {
       IPV4_RE.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = IPV4_RE.exec(run)) !== null) {
-        matches.push({ start: m.index, end: m.index + m[0].length, sgr: SGR.ipv4 });
+        matches.push({ start: m.index, end: m.index + m[0].length, sgr: sgr.ipv4 });
       }
     }
 
@@ -227,8 +254,8 @@ export class AnsiHighlighter {
       this.keywordRe.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = this.keywordRe.exec(run)) !== null) {
-        const sgr = /warn/i.test(m[0]) ? SGR.keywordWarn : SGR.keywordError;
-        matches.push({ start: m.index, end: m.index + m[0].length, sgr });
+        const s = /warn/i.test(m[0]) ? sgr.keywordWarn : sgr.keywordError;
+        matches.push({ start: m.index, end: m.index + m[0].length, sgr: s });
       }
     }
 

@@ -777,14 +777,14 @@ export function SettingsDialog({ onClose }: Props) {
                   </Label>
                   <div className="flex items-start gap-2">
                     <code className="flex-1 break-all rounded border bg-muted/30 px-2 py-1.5 font-mono text-[11px]">
-                      {`claude mcp add deploytools --transport http --url http://127.0.0.1:${mcp.port}/mcp --header "Authorization: Bearer ${mcp.token}"`}
+                      {`claude mcp add --transport http deploytools http://127.0.0.1:${mcp.port}/mcp --header "Authorization: Bearer ${mcp.token}"`}
                     </code>
                     <Button
                       size="icon-sm"
                       variant="ghost"
                       onClick={() =>
                         copyText(
-                          `claude mcp add deploytools --transport http --url http://127.0.0.1:${mcp.port}/mcp --header "Authorization: Bearer ${mcp.token}"`,
+                          `claude mcp add --transport http deploytools http://127.0.0.1:${mcp.port}/mcp --header "Authorization: Bearer ${mcp.token}"`,
                           "Command",
                         )
                       }

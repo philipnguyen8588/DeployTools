@@ -136,6 +136,15 @@ async function getSysinfo(sessionId: string): Promise<SysInfo | null> {
 
 type XtermTheme = typeof THEME_DARK;
 
+/** True when a #rrggbb color is light (so highlight colors should darken).
+ *  Uses perceived luminance. */
+function isLightColor(hex: string): boolean {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  if (!m) return false;
+  const [r, g, b] = [1, 2, 3].map((i) => parseInt(m[i], 16));
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5;
+}
+
 /**
  * Resolve the xterm theme object from the user's choice. "auto" follows
  * the app light/dark mode (Clear Light / Clear Dark); any other value is
@@ -183,6 +192,7 @@ export function Terminal({
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const highlighterRef = useRef<AnsiHighlighter | null>(null);
   const terminalIdRef = useRef<string | null>(null);
   const { resolvedTheme } = useTheme();
 
@@ -268,6 +278,8 @@ export function Terminal({
     if (containerRef.current) {
       containerRef.current.style.setProperty("--xterm-bg", theme.background);
     }
+    // Keep highlight colors readable against the new background.
+    highlighterRef.current?.setLight(isLightColor(theme.background));
   }, [resolvedTheme, terminalTheme]);
 
   // Live font-size: follow the app-wide knob, then refit so the PTY grid
@@ -449,7 +461,12 @@ export function Terminal({
     const highlighter = new AnsiHighlighter({
       ipv4: true,
       keywords: usePrefs.getState().highlightKeywords,
+      light: isLightColor(
+        resolveTheme(usePrefs.getState().terminalTheme, resolvedTheme === "dark")
+          .background,
+      ),
     });
+    highlighterRef.current = highlighter;
 
     (async () => {
       try {
@@ -694,6 +711,7 @@ export function Terminal({
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
+      highlighterRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);

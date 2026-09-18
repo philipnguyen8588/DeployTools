@@ -15,7 +15,10 @@ export const DialogOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-black/70 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      // No backdrop-blur: blurring the whole viewport every frame is what
+      // made opening a modal janky. A plain translucent scrim fades in
+      // cheaply.
+      "fixed inset-0 z-50 bg-black/60 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className,
     )}
     {...props}
@@ -32,12 +35,12 @@ export const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        // Smooth, centered zoom+fade. We deliberately drop the default
-        // shadcn `slide-in-from-top-[48%]` transform: that ~half-screen
-        // travel is what made the modal feel like it lurched up from
-        // below and dropped frames. A small zoom (98%) + fade reads as
-        // instant and never repaints a big area mid-flight.
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-150 ease-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-[0.98] data-[state=open]:zoom-in-[0.98] sm:rounded-lg",
+        // Fade only. We do NOT use tailwindcss-animate's `animate-in`
+        // here: its enter keyframe writes `transform: translate3d(...)`
+        // which overrides the `translate(-50%,-50%)` centering mid-flight,
+        // making the modal lurch up from below. `dialog-fade` (index.css)
+        // animates opacity only, so the box just fades in place.
+        "dialog-fade fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg sm:rounded-lg",
         className,
       )}
       {...props}

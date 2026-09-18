@@ -48,8 +48,12 @@ function decodeColor(b64) {
   const ascii = Buffer.from(b64.replace(/\s+/g, ""), "base64").toString(
     "latin1",
   );
-  // NSRGB ("r g b( a)?") or NSWhite ("w( a)?") components as ASCII floats.
-  const m = ascii.match(/(\d(?:\.\d+)?)( \d(?:\.\d+)?){0,3}/);
+  // NSColor stores components as a space-separated ASCII float string
+  // ("0.17 0.21 0.25"). Require the first value to be followed by at least
+  // one more space-separated value — otherwise a lone stray digit in the
+  // plist's binary framing (e.g. the "00" in "bplist00") matches and every
+  // color decodes to 0 0 0 (black).
+  const m = ascii.match(/(\d(?:\.\d+)?)( \d(?:\.\d+)?){1,3}/);
   if (!m) return null;
   const parts = m[0].trim().split(" ").map(Number);
   let r, g, b;

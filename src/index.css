@@ -103,6 +103,21 @@
   }
 }
 
+/* Dialog enter: opacity-only fade so the centered modal doesn't lurch.
+   (tailwindcss-animate's animate-in would overwrite the centering
+   transform mid-animation.) */
+@keyframes dialog-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.dialog-fade {
+  animation: dialog-fade 110ms ease-out;
+}
+
 /* xterm.js overrides — fit the terminal to the surrounding container */
 .xterm {
   padding: 8px;
