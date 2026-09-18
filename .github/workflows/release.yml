@@ -107,16 +107,25 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           shopt -s nullglob
+          B=src-tauri/target/release/bundle
+          MB=src-tauri/target/universal-apple-darwin/release/bundle
+          echo "--- bundle contents ---"; ls -R "$B" "$MB" 2>/dev/null || true
+          # Tauri v2 emits Linux bundles under BOTH the productName
+          # (DeployTools_*) and the crate name (deploy-tools_*). Drop the
+          # crate-name duplicate only when the productName one also exists.
+          for f in "$B"/deb/deploy-tools_*.deb; do [ -e "${f/deploy-tools_/DeployTools_}" ] && rm -f "$f"; done
+          for f in "$B"/rpm/deploy-tools-*.rpm; do [ -e "${f/deploy-tools-/DeployTools-}" ] && rm -f "$f"; done
+          for f in "$B"/appimage/deploy-tools_*.AppImage; do [ -e "${f/deploy-tools_/DeployTools_}" ] && rm -f "$f"; done
           files=(
-            src-tauri/target/release/bundle/nsis/DeployTools_*-setup.exe
-            src-tauri/target/release/bundle/msi/DeployTools_*.msi
-            src-tauri/target/release/bundle/appimage/DeployTools_*.AppImage
-            src-tauri/target/release/bundle/deb/DeployTools_*.deb
-            src-tauri/target/release/bundle/rpm/DeployTools-*.rpm
-            src-tauri/target/universal-apple-darwin/release/bundle/dmg/DeployTools_*.dmg
+            "$B"/nsis/*-setup.exe
+            "$B"/msi/*.msi
+            "$B"/appimage/*.AppImage
+            "$B"/deb/*.deb
+            "$B"/rpm/*.rpm
+            "$MB"/dmg/*.dmg
           )
           if [ ${#files[@]} -eq 0 ]; then
-            echo "::error::No DeployTools* artifacts found"; find src-tauri/target -name 'bundle' -type d -exec ls -R {} +; exit 1
+            echo "::error::No installer bundles found"; exit 1
           fi
           printf 'Uploading:\n'; printf '  %s\n' "${files[@]}"
           gh release upload "${{ github.ref_name }}" "${files[@]}" \
