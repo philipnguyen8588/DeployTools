@@ -96,9 +96,9 @@ jobs:
           body: "Download the installer for your OS below. The app is not code-signed yet — on Windows click **More info → Run anyway**; on macOS run `xattr -cr /Applications/DeployTools.app` if it won't open."
           fail_on_unmatched_files: false
           files: |
-            src-tauri/target/**/release/bundle/nsis/DeployTools_*-setup.exe
-            src-tauri/target/**/release/bundle/msi/DeployTools_*.msi
-            src-tauri/target/**/release/bundle/dmg/DeployTools_*.dmg
-            src-tauri/target/**/release/bundle/appimage/DeployTools_*.AppImage
-            src-tauri/target/**/release/bundle/deb/DeployTools_*.deb
-            src-tauri/target/**/release/bundle/rpm/DeployTools-*.rpm
+            src-tauri/target/release/bundle/nsis/DeployTools_*-setup.exe
+            src-tauri/target/release/bundle/msi/DeployTools_*.msi
+            src-tauri/target/release/bundle/appimage/DeployTools_*.AppImage
+            src-tauri/target/release/bundle/deb/DeployTools_*.deb
+            src-tauri/target/release/bundle/rpm/DeployTools-*.rpm
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/DeployTools_*.dmg
