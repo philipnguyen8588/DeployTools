@@ -47,52 +47,61 @@ interface Props {
 }
 
 /**
- * macOS Terminal.app palettes. Both themes use Apple's stock ANSI colors
- * (the swatch row you see in Terminal → Settings → Profiles), so output
- * looks exactly like it does on a Mac.
- *
- * Dark = the "Clear Dark" profile (see macos-term/setting-dark.png).
- * xterm's minimumContrastRatio (set at construction) auto-lifts the dark
- * ANSI blue/red when they'd be unreadable on the black background — same
- * readability trick Terminal.app applies.
+ * Exact palettes extracted from the user's Terminal.app profiles
+ * (macos-term/Clear Light.terminal, Clear Dark.terminal — NSColor values
+ * decoded from the plists). These are muted, low-glare colors, NOT
+ * Apple's stock ANSI set, so keep them in sync with the profile files
+ * if those ever change.
  */
-const MACOS_ANSI = {
-  black: "#000000",
-  red: "#990000",
-  green: "#00A600",
-  yellow: "#999900",
-  blue: "#0000B2",
-  magenta: "#B200B2",
-  cyan: "#00A6B2",
-  white: "#BFBFBF",
-  brightBlack: "#666666",
-  brightRed: "#E50000",
-  brightGreen: "#00D900",
-  brightYellow: "#E5E500",
-  brightBlue: "#0000FF",
-  brightMagenta: "#E500E5",
-  brightCyan: "#00E5E5",
-  brightWhite: "#E5E5E5",
-};
 
-/** macOS dark terminal, softened: near-black (not void-black) background
- *  and gently dimmed text so long sessions don't glare. */
+/** "Clear Dark" profile. (Profile bg is #191D27 @ 95% opacity — we
+ *  render opaque.) The profile defines no cursor color; gray matches
+ *  Terminal.app's default look. */
 const THEME_DARK = {
-  background: "#1E1E1E",
-  foreground: "#D6D6D6",
+  background: "#191D27",
+  foreground: "#E0E0E0",
   cursor: "#8C8C8C",
-  selectionBackground: "#404040",
-  ...MACOS_ANSI,
+  selectionBackground: "#273D4C",
+  black: "#35424C",
+  red: "#B45648",
+  green: "#6CAA71",
+  yellow: "#C4AC62",
+  blue: "#6D96B4",
+  magenta: "#BD7BCD",
+  cyan: "#7CCBCD",
+  white: "#DEE5EB",
+  brightBlack: "#465C6D",
+  brightRed: "#DF6C5A",
+  brightGreen: "#79BE7E",
+  brightYellow: "#E5C872",
+  brightBlue: "#67B5ED",
+  brightMagenta: "#D389E5",
+  brightCyan: "#84DDE0",
+  brightWhite: "#E5EFF5",
 };
 
-/** macOS light terminal, softened: paper-white (not pure white) background
- *  with Apple's soft label black. */
+/** "Clear Light" profile. */
 const THEME_LIGHT = {
-  background: "#F7F7F7",
-  foreground: "#262626",
-  cursor: "#7F7F7F",
-  selectionBackground: "#B3D7FF",
-  ...MACOS_ANSI,
+  background: "#FFFFFF",
+  foreground: "#2D3840",
+  cursor: "#919191",
+  selectionBackground: "#DFE8EE",
+  black: "#2D3840",
+  red: "#B45648",
+  green: "#6CAA71",
+  yellow: "#C4AC62",
+  blue: "#5685A8",
+  magenta: "#AD64BE",
+  cyan: "#69C6C9",
+  white: "#C1C8CC",
+  brightBlack: "#506573",
+  brightRed: "#DF6C5A",
+  brightGreen: "#79BE7E",
+  brightYellow: "#E5C872",
+  brightBlue: "#49A2E1",
+  brightMagenta: "#D389E5",
+  brightCyan: "#77E1E5",
+  brightWhite: "#D8E1E7",
 };
 
 export function Terminal({
@@ -198,14 +207,23 @@ export function Terminal({
       fontFamily:
         '"SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace',
       fontSize: 13,
+      // Windows renders these faces thinner than macOS does — nudge the
+      // weight up so text reads as solid, not gray (Cascadia Mono is a
+      // variable font, so 450 is honored, not synthesized).
+      fontWeight: 450,
       // SF Mono's roomy vertical rhythm — Terminal.app spacing.
       lineHeight: 1.2,
       // Terminal.app default: steady block cursor (blink is off).
       cursorStyle: "block",
       cursorBlink: false,
-      // Auto-lift unreadable combos (e.g. ANSI dark blue on the dark
-      // background) — mirrors Terminal.app's minimum-contrast behavior.
-      minimumContrastRatio: 3,
+      // Terminal.app's "Use bright colors for bold text" is OFF: bold
+      // text keeps its normal color and just gets the heavier weight.
+      // (xterm's default true made the bold green prompt render in pale
+      // bright-green — the washed-out look on light backgrounds.)
+      drawBoldTextInBrightColors: false,
+      // No minimumContrastRatio: the Clear Light/Dark palettes were
+      // designed for their exact backgrounds — any forced ratio would
+      // distort them away from the .terminal profiles.
       allowProposedApi: true,
       // 2k lines is ~200-400 KB per terminal (vs 500 KB-1 MB at 5k).
       // Users who need more can scroll back to their shell's own buffer

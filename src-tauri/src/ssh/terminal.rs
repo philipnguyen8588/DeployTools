@@ -77,8 +77,30 @@ pub async fn open(
     let session_ref = session.clone();
     tokio::spawn(async move {
         let mut pending_init = init_cmd;
+        // The auto-cd is injected only after the server has been QUIET for
+        // 300 ms following its first output. Injecting right after the
+        // first chunk (previous behavior) raced the login MOTD: the tty
+        // driver echoed the cd line mid-MOTD and the erase sequence then
+        // wiped the wrong line. Quiescence means the MOTD is fully
+        // painted and the shell is sitting at its prompt, so the cd
+        // echoes exactly once, at the prompt, where the printf erases it.
+        let mut init_deadline: Option<tokio::time::Instant> = None;
         let event_name = format!("term://{}", term_id);
         let exit_event = format!("term-exit://{}", term_id);
+
+        // Output coalescing. Line-buffered producers (`docker compose
+        // logs -f`, verbose builds) generate hundreds of tiny Data
+        // messages per second; forwarding each as its own Tauri event
+        // floods the webview IPC (every payload is JSON-serialized) and
+        // freezes the UI. Buffer server output and flush at most once
+        // per 16 ms (one frame) or when 128 KiB has accumulated. After
+        // an idle period the interval has a tick "banked", so a lone
+        // keystroke echo still flushes immediately — no felt latency.
+        const FLUSH_MAX: usize = 128 * 1024;
+        let mut out_buf: Vec<u8> = Vec::new();
+        let mut flush =
+            tokio::time::interval(std::time::Duration::from_millis(16));
+        flush.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
@@ -103,24 +125,39 @@ pub async fn open(
                 msg = channel.wait() => {
                     match msg {
                         Some(ChannelMsg::Data { data }) => {
-                            let bytes = data.to_vec();
-                            let _ = app.emit(&event_name, bytes);
-                            // The banner is on its way — now it's safe to
-                            // inject the `cd` without stepping on the
-                            // MOTD / prompt rendering.
-                            if let Some(cmd) = pending_init.take() {
-                                let _ = channel.data(cmd.as_bytes()).await;
+                            out_buf.extend_from_slice(&data);
+                            if out_buf.len() >= FLUSH_MAX {
+                                let _ = app.emit(&event_name, std::mem::take(&mut out_buf));
+                            }
+                            // Every output chunk pushes the quiet-period
+                            // deadline back; the auto-cd fires only once
+                            // the stream settles (see init_deadline note).
+                            if pending_init.is_some() {
+                                init_deadline = Some(
+                                    tokio::time::Instant::now()
+                                        + std::time::Duration::from_millis(300),
+                                );
                             }
                         }
                         Some(ChannelMsg::ExtendedData { data, ext: _ }) => {
                             // stderr over an interactive shell — merge.
-                            let bytes = data.to_vec();
-                            let _ = app.emit(&event_name, bytes);
-                            if let Some(cmd) = pending_init.take() {
-                                let _ = channel.data(cmd.as_bytes()).await;
+                            out_buf.extend_from_slice(&data);
+                            if out_buf.len() >= FLUSH_MAX {
+                                let _ = app.emit(&event_name, std::mem::take(&mut out_buf));
+                            }
+                            if pending_init.is_some() {
+                                init_deadline = Some(
+                                    tokio::time::Instant::now()
+                                        + std::time::Duration::from_millis(300),
+                                );
                             }
                         }
                         Some(ChannelMsg::ExitStatus { exit_status }) => {
+                            // Drain buffered output first so the frontend
+                            // sees all data before the exit notification.
+                            if !out_buf.is_empty() {
+                                let _ = app.emit(&event_name, std::mem::take(&mut out_buf));
+                            }
                             let _ = app.emit(&exit_event, exit_status);
                         }
                         Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
@@ -129,10 +166,28 @@ pub async fn open(
                         _ => {}
                     }
                 }
+                // Frame-paced flush of buffered output. The branch is
+                // disabled while the buffer is empty so an idle terminal
+                // never wakes the task.
+                _ = flush.tick(), if !out_buf.is_empty() => {
+                    let _ = app.emit(&event_name, std::mem::take(&mut out_buf));
+                }
+                // Server went quiet after login output → inject the
+                // auto-cd now, at a settled prompt.
+                _ = tokio::time::sleep_until(init_deadline.unwrap_or_else(tokio::time::Instant::now)),
+                    if init_deadline.is_some() && pending_init.is_some() => {
+                    init_deadline = None;
+                    if let Some(cmd) = pending_init.take() {
+                        let _ = channel.data(cmd.as_bytes()).await;
+                    }
+                }
             }
         }
 
-        // Clean up the slot in the session.
+        // Clean up the slot in the session. Drain any tail output first.
+        if !out_buf.is_empty() {
+            let _ = app.emit(&event_name, std::mem::take(&mut out_buf));
+        }
         session_ref.terminals.remove(&term_id);
         let _ = app.emit(&exit_event, -1i32);
     });
