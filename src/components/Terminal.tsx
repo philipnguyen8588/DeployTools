@@ -108,14 +108,14 @@ const THEME_LIGHT = {
 };
 
 /**
- * The terminal glyph size derived from the app-wide font knob. The UI's
- * body text is Tailwind `text-sm` (0.875rem), so scaling the terminal by
- * the same factor keeps it visually matched to the panels around it
- * rather than reading a size larger (the terminal font measures wider per
- * glyph than the proportional UI font at equal px). Floored at 10px.
+ * The terminal glyph size derived from the app-wide font knob. The panels
+ * around the terminal render at Tailwind `text-xs` (0.75rem ≈ 11px at the
+ * default 15px root), but pure 0.75 was a touch too small for sustained
+ * terminal reading — 0.8 lands on 12px at the default size, close enough
+ * to sit flush with the UI while staying comfortable. Floored at 10px.
  */
 function terminalFontSize(uiFontSize: number): number {
-  return Math.max(10, Math.round(uiFontSize * 0.875));
+  return Math.max(10, uiFontSize * 0.8);
 }
 
 /** Per-session cache of the banner's system-info probe, so opening a
@@ -298,17 +298,18 @@ export function Terminal({
     let disposed = false;
 
     const term = new XTerm({
-      // macOS Terminal.app look: SF Mono first (picked up automatically if
-      // the user installs it — Apple's license forbids bundling), then
-      // Menlo (mac), then Cascadia Mono (ships with Windows 11 and is the
-      // closest system font to SF Mono), then Consolas.
+      // JetBrains Mono is BUNDLED (see @font-face in index.css) so every
+      // machine renders the terminal with identical font metrics — no more
+      // SF Mono (mac) vs Cascadia/Consolas (Windows) size drift. The
+      // system faces remain as fallbacks only for the first frames before
+      // the woff2 is parsed.
       fontFamily:
-        '"SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace',
+        '"JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace',
       fontSize: terminalFontSize(usePrefs.getState().uiFontSize),
-      // Windows renders these faces thinner than macOS does — nudge the
-      // weight up so text reads as solid, not gray (Cascadia Mono is a
-      // variable font, so 450 is honored, not synthesized).
-      fontWeight: 450,
+      // JetBrains Mono ships static 400/700 faces — ask for exactly 400
+      // (a fractional weight would be snapped/synthesized per-platform,
+      // reintroducing cross-machine differences).
+      fontWeight: 400,
       // SF Mono's roomy vertical rhythm — Terminal.app spacing.
       lineHeight: 1.2,
       // Terminal.app default: steady block cursor (blink is off).
@@ -340,6 +341,20 @@ export function Terminal({
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(containerRef.current);
+    // xterm measures glyph metrics at open(). If the bundled JetBrains
+    // Mono woff2 hasn't finished parsing yet, it measures the fallback
+    // face instead — so once the font is ready, poke the option to force
+    // a re-measure and refit. No-op when the font was already cached.
+    void document.fonts
+      .load(`${terminalFontSize(usePrefs.getState().uiFontSize)}px "JetBrains Mono"`)
+      .then(() => {
+        if (termRef.current === term) {
+          const fam = term.options.fontFamily;
+          term.options.fontFamily = fam; // setter forces glyph re-measure
+          fit.fit();
+        }
+      })
+      .catch(() => {});
     // WebGL renderer — 10-50x the throughput of the default DOM renderer,
     // which is what buckles first under a `docker compose logs -f` flood.
     // Must load after open(); falls back to DOM silently if the context
