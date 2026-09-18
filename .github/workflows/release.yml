@@ -3,16 +3,17 @@ name: Release
 # Build desktop bundles for Windows, macOS and Linux and publish a
 # GitHub Release with only the DeployTools* installers attached.
 #
-# Triggers:
-#   - push a tag like `v0.1.0`  -> builds + creates/updates the release
-#   - manual run (workflow_dispatch) -> builds only (no release upload)
+# The release is created ONCE by a dedicated job, then each platform's
+# build job uploads its own (uniquely-named) assets to it — so the three
+# jobs never race to create/update the release at the same time.
+#
+# Trigger: push a tag like `v0.1.0`.
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
 
-# Allow the action to create releases / upload assets.
 permissions:
   contents: write
 
@@ -22,24 +23,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  create-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create / ensure the release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "DeployTools ${{ github.ref_name }}"
+          draft: false
+          prerelease: false
+          body: |
+            Download the installer for your OS below.
+
+            The app is not code-signed yet, so the OS will warn on first launch:
+            - **Windows:** on the SmartScreen popup click **More info → Run anyway**.
+            - **macOS:** if it won't open, run `xattr -cr "/Applications/DeployTools.app"` (or right-click the app → **Open**).
+
   build:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
         include:
           # macOS universal binary (Apple Silicon + Intel in one .dmg)
           - platform: macos-latest
-            target: universal-apple-darwin
             args: "--target universal-apple-darwin"
           # Windows x64 (.msi + NSIS .exe)
           - platform: windows-latest
-            target: x86_64-pc-windows-msvc
             args: ""
           # Linux x64 (.AppImage + .deb + .rpm). Build on the OLDEST
           # supported Ubuntu so the AppImage's glibc requirement stays
           # broad (a 24.04 build won't run on older distros).
           - platform: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
             args: ""
 
     runs-on: ${{ matrix.platform }}
@@ -71,29 +90,21 @@ jobs:
           # macOS universal build needs both arch targets installed.
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      # No Rust cache on release: a clean build avoids stale bundles from
-      # a previous productName lingering in target/ and confusing
-      # tauri-action ("No artifacts were found").
-
       - name: Install frontend dependencies
         run: npm ci
 
       - name: Build the app
         run: npm run tauri -- build ${{ matrix.args }}
 
-      # tauri-action's own artifact detection breaks here because Tauri v2
-      # emits Linux bundles under BOTH the productName (DeployTools_*) and
-      # the Cargo crate name (deploy-tools_*). We upload only the
-      # DeployTools* bundles ourselves, which is deterministic.
-      - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/')
+      # Upload only the DeployTools* bundles (Tauri v2 also emits Linux
+      # bundles under the crate name deploy-tools_*, which we skip). Each
+      # platform's asset names are unique, so parallel uploads don't clash.
+      - name: Upload assets
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref_name }}
-          name: "DeployTools ${{ github.ref_name }}"
-          body: "Download the installer for your OS below. The app is not code-signed yet — on Windows click **More info → Run anyway**; on macOS run `xattr -cr /Applications/DeployTools.app` if it won't open."
           fail_on_unmatched_files: false
           files: |
             src-tauri/target/release/bundle/nsis/DeployTools_*-setup.exe
