@@ -70,11 +70,9 @@ jobs:
           # macOS universal build needs both arch targets installed.
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - name: Cache Rust build
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-          key: ${{ matrix.target }}
+      # No Rust cache on release: a clean build avoids stale bundles from
+      # a previous productName lingering in target/ and confusing
+      # tauri-action ("No artifacts were found").
 
       - name: Install frontend dependencies
         run: npm ci
