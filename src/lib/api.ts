@@ -28,6 +28,7 @@ import type {
   ServerSummary,
   SessionSummary,
   Snippet,
+  SysInfo,
   UUID,
   VaultStatus,
 } from "./types";
@@ -87,8 +88,15 @@ export const listSessions = () => invoke<SessionSummary[]>("list_sessions");
 
 // --- Terminal ---
 
-export const termOpen = (sessionId: string, cols: number, rows: number) =>
-  invoke<string>("term_open", { sessionId, cols, rows });
+export const termOpen = (
+  sessionId: string,
+  terminalId: string,
+  cols: number,
+  rows: number,
+) => invoke<string>("term_open", { sessionId, terminalId, cols, rows });
+/** Probe the server for the welcome banner's system-info block. */
+export const termSysinfo = (sessionId: string) =>
+  invoke<SysInfo>("term_sysinfo", { sessionId });
 export const termWrite = (sessionId: string, terminalId: string, data: string) =>
   invoke<void>("term_write", { sessionId, terminalId, data });
 export const termResize = (

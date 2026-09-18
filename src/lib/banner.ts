@@ -42,6 +42,20 @@ export function indexAfterLastClear(s: string): number {
   return best;
 }
 
+/** Optional live system-info block (from the `term_sysinfo` probe). Every
+ *  field is optional — only the ones present are rendered. */
+export interface BannerSysInfo {
+  welcome?: string | null;
+  date?: string | null;
+  load?: string | null;
+  processes?: string | null;
+  users?: string | null;
+  disk?: string | null;
+  memory?: string | null;
+  swap?: string | null;
+  ipv4?: string | null;
+}
+
 export interface BannerOpts {
   user: string;
   host: string;
@@ -51,6 +65,17 @@ export interface BannerOpts {
   /** Live terminal width in columns (read after `fit.fit()`). */
   cols: number;
   theme: "dark" | "light";
+  /** Server system-info to append inside the box (optional). */
+  sysinfo?: BannerSysInfo | null;
+}
+
+/** One piece of a row: `t` is the visible text (used for width math), `c`
+ *  is the optional SGR color applied around it. Keeping text + color
+ *  together means the padding can never drift from what actually renders
+ *  (the old plain/colored split silently miscounted the ✓ glyphs). */
+interface Seg {
+  t: string;
+  c?: string;
 }
 
 export function buildBanner(opts: BannerOpts): string {
@@ -69,56 +94,76 @@ export function buildBanner(opts: BannerOpts): string {
   const cGreen = `${ESC}[32m`;
   const cVal = opts.theme === "dark" ? `${ESC}[97m` : `${ESC}[30m`;
 
-  const top = `┌${"─".repeat(inner)}┐`;
-  const bottom = `└${"─".repeat(inner)}┘`;
+  // Dashed box: ┄ (triple-dash horizontal) + ┆ (triple-dash vertical).
+  const top = `┌${"┄".repeat(inner)}┐`;
+  const bottom = `└${"┄".repeat(inner)}┘`;
 
-  /** Build one bordered row from segments; `plain` is the visible text used
-   *  for width math, `colored` is what actually gets written. */
-  const row = (plain: string, colored: string): string => {
-    const shown = truncate(plain, contentWidth);
-    // If we truncated, we can't safely keep the colored version's tail, so
-    // fall back to a plain (but still padded) render.
-    const body =
-      shown === plain ? colored : truncate(plain, contentWidth);
-    const pad = " ".repeat(Math.max(0, contentWidth - shown.length));
-    return `│ ${body}${pad} │`;
+  /** Build one bordered row from colored segments. Width is measured from
+   *  the segment texts only (never the SGR codes), and the whole visible
+   *  string is truncated with an ellipsis if it would exceed the box. */
+  const row = (...segs: Seg[]): string => {
+    let visible = segs.map((s) => s.t).join("");
+    let colored = segs
+      .map((s) => (s.c ? `${s.c}${s.t}${RESET}` : s.t))
+      .join("");
+    if (visible.length > contentWidth) {
+      // Over-long: fall back to a plain, truncated render so alignment is
+      // guaranteed even if a value (e.g. a long hostname) is huge.
+      visible = truncate(visible, contentWidth);
+      colored = visible;
+    }
+    const pad = " ".repeat(Math.max(0, contentWidth - visible.length));
+    return `┆ ${colored}${pad} ┆`;
   };
 
   /** A blank interior line. */
-  const blank = () => `│ ${" ".repeat(contentWidth)} │`;
-
-  const check = `${cGreen}✓${RESET}`;
+  const blank = () => `┆ ${" ".repeat(contentWidth)} ┆`;
 
   const authLabel = authKind === "key" ? "public key" : "password";
+  const target = `${user}@${host}:${port}`;
 
-  const lines: string[] = [];
-  lines.push(top);
+  const lines: string[] = [top];
   lines.push(
-    row(
-      "DeployTools • SSH session",
-      `${cCyan}DeployTools${RESET}${cDim} • SSH session${RESET}`,
-    ),
+    row({ t: "DeployTools", c: cCyan }, { t: " • SSH session", c: cDim }),
   );
   lines.push(blank());
-
-  const target = `${user}@${host}:${port}`;
-  lines.push(
-    row(
-      `SSH session to ${target}`,
-      `${cDim}SSH session to ${RESET}${cVal}${target}${RESET}`,
-    ),
-  );
-  lines.push(
-    row(`Auth: ${authLabel}`, `${cDim}Auth: ${RESET}${cVal}${authLabel}${RESET}`),
-  );
+  lines.push(row({ t: "SSH session to ", c: cDim }, { t: target, c: cVal }));
+  lines.push(row({ t: "Auth: ", c: cDim }, { t: authLabel, c: cVal }));
   if (hasFingerprint) {
     lines.push(
-      row("Host key: verified", `${cDim}Host key: ${RESET}${check} verified`),
+      row(
+        { t: "Host key: ", c: cDim },
+        { t: "✓", c: cGreen },
+        { t: " verified" },
+      ),
     );
   }
   lines.push(blank());
-  lines.push(row("Direct SSH  ✓", `${cDim}Direct SSH  ${RESET}${check}`));
-  lines.push(row("SFTP browser  ✓", `${cDim}SFTP browser  ${RESET}${check}`));
+  lines.push(row({ t: "Direct SSH  ", c: cDim }, { t: "✓", c: cGreen }));
+  lines.push(row({ t: "SFTP browser  ", c: cDim }, { t: "✓", c: cGreen }));
+
+  // Live system information (Ubuntu-MOTD-style), when probed.
+  const si = opts.sysinfo;
+  if (si && (si.welcome || si.load || si.memory || si.disk || si.ipv4)) {
+    lines.push(blank());
+    if (si.welcome) lines.push(row({ t: si.welcome, c: cVal }));
+    if (si.date)
+      lines.push(row({ t: `System information as of ${si.date}`, c: cDim }));
+    // Aligned label/value rows — pad the label so the values line up.
+    const kv = (label: string, value?: string | null) => {
+      if (!value) return;
+      const lbl = `${label}:`.padEnd(18);
+      lines.push(row({ t: lbl, c: cDim }, { t: value, c: cVal }));
+    };
+    kv("System load", si.load);
+    kv("Processes", si.processes);
+    kv("Usage of /", si.disk);
+    kv("Users logged in", si.users);
+    kv("Memory usage", si.memory);
+    kv("IPv4 address", si.ipv4);
+    kv("Swap usage", si.swap);
+  }
+
   lines.push(bottom);
 
   // The row/border builders already emit fixed-width lines, so just

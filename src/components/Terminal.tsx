@@ -13,6 +13,7 @@ import { usePrefs } from "@/stores/prefs";
 import { buildBanner, indexAfterLastClear } from "@/lib/banner";
 import { AnsiHighlighter } from "@/lib/ansi-highlight";
 import { TERMINAL_THEMES } from "@/lib/terminal-themes";
+import type { SysInfo } from "@/lib/types";
 
 interface Props {
   sessionId: string;
@@ -105,6 +106,33 @@ const THEME_LIGHT = {
   brightCyan: "#77E1E5",
   brightWhite: "#D8E1E7",
 };
+
+/**
+ * The terminal glyph size derived from the app-wide font knob. The UI's
+ * body text is Tailwind `text-sm` (0.875rem), so scaling the terminal by
+ * the same factor keeps it visually matched to the panels around it
+ * rather than reading a size larger (the terminal font measures wider per
+ * glyph than the proportional UI font at equal px). Floored at 10px.
+ */
+function terminalFontSize(uiFontSize: number): number {
+  return Math.max(10, Math.round(uiFontSize * 0.875));
+}
+
+/** Per-session cache of the banner's system-info probe, so opening a
+ *  second terminal tab reuses it instead of re-running the SSH exec.
+ *  Keyed by session id (a reconnect mints a fresh id → fresh probe). */
+const sysinfoCache = new Map<string, SysInfo>();
+async function getSysinfo(sessionId: string): Promise<SysInfo | null> {
+  const cached = sysinfoCache.get(sessionId);
+  if (cached) return cached;
+  try {
+    const info = await api.termSysinfo(sessionId);
+    sysinfoCache.set(sessionId, info);
+    return info;
+  } catch {
+    return null;
+  }
+}
 
 type XtermTheme = typeof THEME_DARK;
 
@@ -247,7 +275,7 @@ export function Terminal({
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.fontSize = uiFontSize;
+    term.options.fontSize = terminalFontSize(uiFontSize);
     fitRef.current?.fit();
   }, [uiFontSize]);
 
@@ -264,7 +292,7 @@ export function Terminal({
       // closest system font to SF Mono), then Consolas.
       fontFamily:
         '"SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace',
-      fontSize: usePrefs.getState().uiFontSize,
+      fontSize: terminalFontSize(usePrefs.getState().uiFontSize),
       // Windows renders these faces thinner than macOS does — nudge the
       // weight up so text reads as solid, not gray (Cascadia Mono is a
       // variable font, so 450 is honored, not synthesized).
@@ -398,43 +426,23 @@ export function Terminal({
     fit.fit();
     const { cols, rows } = term;
 
-    // MobaXterm-style welcome banner — written BEFORE the async open() so it
-    // renders above the server's own MOTD / "Last login:" line. Server info
-    // is read imperatively from the servers store (same pattern as the
-    // sessions store below) so it doesn't join the effect deps.
+    // Welcome banner config, resolved synchronously from the stores. The
+    // banner itself is drawn inside the async block below, after the
+    // system-info probe returns, so the box can include live server stats.
+    const bannerCfg = (() => {
+      if (!usePrefs.getState().bannerEnabled || !serverId) return null;
+      const sv = useServers.getState().servers.find((s) => s.id === serverId);
+      if (!sv) return null;
+      const hasProject = !!useSessions
+        .getState()
+        .tabs.find((t) => t.session.id === sessionId)?.session.project_id;
+      return { sv, hasProject };
+    })();
     // Safety net: if anything clears the screen right after connect (a
-    // server that runs `clear` in its shell init, or the older backend
-    // auto-cd that cleared), the banner we just drew would be wiped. Keep
-    // the banner string around and re-insert it directly after any clear
-    // sequence seen in the connect window.
+    // server that runs `clear` in its shell init), the banner we drew would
+    // be wiped — keep it around and re-insert it after any clear sequence.
     let bannerReinject: string | null = null;
     let bannerDeadline = 0;
-    if (usePrefs.getState().bannerEnabled && serverId) {
-      const sv = useServers
-        .getState()
-        .servers.find((s) => s.id === serverId);
-      if (sv) {
-        const banner = buildBanner({
-          user: sv.user,
-          host: sv.host,
-          port: sv.port,
-          authKind: sv.auth_kind === "key" ? "key" : "password",
-          hasFingerprint: sv.has_fingerprint,
-          cols: term.cols,
-          theme: resolvedTheme === "dark" ? "dark" : "light",
-        });
-        term.write(banner);
-        const hasProject = useSessions
-          .getState()
-          .tabs.find((t) => t.session.id === sessionId)?.session.project_id;
-        if (hasProject) {
-          bannerReinject = banner;
-          // Watch only the connect window — a `clear` typed by the user
-          // minutes later must NOT resurrect the banner.
-          bannerDeadline = Date.now() + 15_000;
-        }
-      }
-    }
 
     // One colorizer per terminal — carries escape/alt-screen state across
     // the server output chunks. Gated live via highlightOnRef.
@@ -445,27 +453,40 @@ export function Terminal({
 
     (async () => {
       try {
-        const tid = await api.termOpen(sessionId, cols, rows);
-        if (disposed) {
-          await api.termClose(sessionId, tid).catch(() => {});
-          return;
+        // Draw the welcome banner (with a live system-info block probed
+        // from the server) BEFORE opening the PTY, so it sits above the
+        // shell's own "Last login" / prompt output.
+        if (bannerCfg) {
+          const sysinfo = await getSysinfo(sessionId);
+          if (disposed) return;
+          const { sv } = bannerCfg;
+          const banner = buildBanner({
+            user: sv.user,
+            host: sv.host,
+            port: sv.port,
+            authKind: sv.auth_kind === "key" ? "key" : "password",
+            hasFingerprint: sv.has_fingerprint,
+            cols: term.cols,
+            theme: resolvedTheme === "dark" ? "dark" : "light",
+            sysinfo,
+          });
+          term.write(banner);
+          if (bannerCfg.hasProject) {
+            bannerReinject = banner;
+            bannerDeadline = Date.now() + 15_000;
+          }
         }
-        terminalIdRef.current = tid;
-        onTerminalReady?.(tid);
+        if (disposed) return;
 
-        // Send the seeded command once the shell is ready. We wait a
-        // short tick for the server to paint the first prompt so our
-        // command doesn't land before the PS1 is drawn.
-        if (seed) {
-          const payload = seed.endsWith("\n") ? seed : `${seed}\n`;
-          window.setTimeout(() => {
-            if (!disposed && terminalIdRef.current) {
-              void api.termWrite(sessionId, terminalIdRef.current, payload);
-            }
-          }, 250);
-        }
-
+        // Generate the terminal id on the FRONTEND and wire up its
+        // listeners BEFORE opening the backend terminal. The driver task
+        // emits the login MOTD the instant the shell produces it; if we
+        // opened first and listened after (the old order), that first
+        // burst raced the listener and the "Welcome to Ubuntu…" lines
+        // were silently dropped.
+        const tid = crypto.randomUUID();
         const bump = () => useSessions.getState().bumpActivity(sessionId);
+
         unlistenData = await listen<number[] | Uint8Array>(
           `term://${tid}`,
           (event) => {
@@ -509,6 +530,28 @@ export function Terminal({
           term.writeln("\r\n\x1b[90m[session closed]\x1b[0m");
           onTerminalReady?.(null);
         });
+
+        // Listeners are live — now open the backend PTY with our id.
+        if (disposed) return;
+        await api.termOpen(sessionId, tid, cols, rows);
+        if (disposed) {
+          await api.termClose(sessionId, tid).catch(() => {});
+          return;
+        }
+        terminalIdRef.current = tid;
+        onTerminalReady?.(tid);
+
+        // Send the seeded command once the shell is ready. We wait a
+        // short tick for the server to paint the first prompt so our
+        // command doesn't land before the PS1 is drawn.
+        if (seed) {
+          const payload = seed.endsWith("\n") ? seed : `${seed}\n`;
+          window.setTimeout(() => {
+            if (!disposed && terminalIdRef.current) {
+              void api.termWrite(sessionId, terminalIdRef.current, payload);
+            }
+          }, 250);
+        }
 
         // Terminal-history capture. We commit a line to `history_add` when
         // the user presses Enter. Two sources, in priority order:

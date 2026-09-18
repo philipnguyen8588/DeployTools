@@ -75,6 +75,20 @@ export interface SessionSummary {
   protocol: Protocol;
 }
 
+/** Live system-info block for the welcome banner (mirrors the Rust
+ *  `SysInfo` in commands/terminal.rs). All fields optional. */
+export interface SysInfo {
+  welcome: string | null;
+  date: string | null;
+  load: string | null;
+  processes: string | null;
+  users: string | null;
+  disk: string | null;
+  memory: string | null;
+  swap: string | null;
+  ipv4: string | null;
+}
+
 export interface RemoteEntry {
   name: string;
   full_path: string;

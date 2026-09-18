@@ -5,6 +5,10 @@ import { Toaster } from "sonner";
 
 import App from "./App";
 import { ConfirmProvider } from "./components/ConfirmDialog";
+// Self-hosted Inter (variable) — the closest free match to Apple's San
+// Francisco, so the UI reads like macOS on Windows too. Bundled locally
+// so it works offline in the Tauri webview (no CDN / CSP issues).
+import "@fontsource-variable/inter";
 import "./index.css";
 import "@xterm/xterm/css/xterm.css";
 

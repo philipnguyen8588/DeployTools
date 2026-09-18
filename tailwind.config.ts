@@ -12,7 +12,18 @@ const config: Config = {
     },
     extend: {
       fontFamily: {
-        sans: ['"Inter"', "system-ui", "sans-serif"],
+        // macOS look: real San Francisco on Apple platforms, then the
+        // self-hosted Inter Variable (SF's closest free sibling) on
+        // Windows/Linux, then the OS UI font.
+        sans: [
+          "-apple-system",
+          "BlinkMacSystemFont",
+          '"SF Pro Text"',
+          '"Inter Variable"',
+          '"Inter"',
+          "system-ui",
+          "sans-serif",
+        ],
         mono: ['"JetBrains Mono"', "ui-monospace", "monospace"],
       },
       colors: {

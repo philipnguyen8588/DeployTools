@@ -104,6 +104,7 @@ pub fn run() {
             commands::session::list_sessions,
             // Integrated terminal
             commands::terminal::term_open,
+            commands::terminal::term_sysinfo,
             commands::terminal::term_write,
             commands::terminal::term_resize,
             commands::terminal::term_close,

@@ -327,7 +327,11 @@ pub async fn docker_compose_exec_shell(
 
     // Open a new terminal channel inside the session, seed with an
     // auto-shell command that prefers bash but falls back to sh.
-    let terminal_id = crate::ssh::terminal::open(session.clone(), 80, 24).await?;
+    // Backend-initiated, so we mint the id here (the frontend attaches
+    // its listener to the returned id).
+    let terminal_id =
+        crate::ssh::terminal::open(session.clone(), Uuid::new_v4().to_string(), 80, 24)
+            .await?;
 
     // Build the seeded line as user-input to the shell.
     let seed = format!(
