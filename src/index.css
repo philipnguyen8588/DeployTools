@@ -80,10 +80,11 @@
     @apply border-border;
   }
   /* Base font size drives every rem-based Tailwind text class (text-xs,
-     text-sm, …). Bumped from the 16px default to 17px so the whole UI
-     reads a notch larger without touching each component. */
+     text-sm, …). This is the pre-hydration default; App.tsx overrides it
+     live from the persisted `uiFontSize` pref so the size is adjustable
+     app-wide from Settings. Keep in sync with FONT_SIZE_DEFAULT. */
   html {
-    font-size: 17px;
+    font-size: 15px;
   }
   body {
     @apply bg-background text-foreground;

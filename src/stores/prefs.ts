@@ -36,13 +36,23 @@ interface PrefsState {
   highlightKeywords: string[];
   /** Selected terminal color theme, or "auto" to follow the app theme. */
   terminalTheme: TerminalThemeChoice;
+  /** Single source of truth for text size across the whole app (px). It
+   *  drives the html root font-size — so every rem-based Tailwind class
+   *  scales — and the integrated terminal's font, keeping them in sync. */
+  uiFontSize: number;
 
   setBannerEnabled: (v: boolean) => void;
   setHighlightEnabled: (v: boolean) => void;
   toggleHighlight: () => void;
   setKeywords: (list: string[]) => void;
   setTerminalTheme: (name: TerminalThemeChoice) => void;
+  setUiFontSize: (px: number) => void;
 }
+
+/** Allowed app font-size range (px) and default. */
+export const FONT_SIZE_MIN = 12;
+export const FONT_SIZE_MAX = 20;
+export const FONT_SIZE_DEFAULT = 15;
 
 export type { TerminalThemeEntry };
 
@@ -53,6 +63,7 @@ export const usePrefs = create<PrefsState>()(
       highlightEnabled: true,
       highlightKeywords: DEFAULT_HIGHLIGHT_KEYWORDS,
       terminalTheme: "auto",
+      uiFontSize: FONT_SIZE_DEFAULT,
 
       setBannerEnabled: (v) => set({ bannerEnabled: v }),
       setHighlightEnabled: (v) => set({ highlightEnabled: v }),
@@ -60,6 +71,13 @@ export const usePrefs = create<PrefsState>()(
         set((s) => ({ highlightEnabled: !s.highlightEnabled })),
       setKeywords: (list) => set({ highlightKeywords: list }),
       setTerminalTheme: (name) => set({ terminalTheme: name }),
+      setUiFontSize: (px) =>
+        set({
+          uiFontSize: Math.max(
+            FONT_SIZE_MIN,
+            Math.min(FONT_SIZE_MAX, Math.round(px)),
+          ),
+        }),
     }),
     { name: "deploytools-prefs" },
   ),

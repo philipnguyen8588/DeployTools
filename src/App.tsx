@@ -84,9 +84,18 @@ import * as api from "./lib/api";
 import { useServers } from "./stores/servers";
 import { useProjects } from "./stores/projects";
 import { useView } from "./stores/view";
+import { usePrefs } from "./stores/prefs";
 
 export default function App() {
   const { unlocked, lock } = useVault();
+
+  // Single knob for app-wide text size: set the html root font-size so
+  // every rem-based Tailwind class scales uniformly. The terminal reads
+  // the same value for its own font (see Terminal.tsx).
+  const uiFontSize = usePrefs((s) => s.uiFontSize);
+  useEffect(() => {
+    document.documentElement.style.fontSize = `${uiFontSize}px`;
+  }, [uiFontSize]);
   const { tabs, activeId } = useSessions();
   // Reflect MCP-driven sessions in the UI (open/drop tabs).
   useMcpBridge();

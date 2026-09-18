@@ -206,7 +206,12 @@ pub async fn open(
 /// near so escape sequences / UTF-8 rarely split, and a dim notice line
 /// tells the user how much was skipped.
 fn flush_output(app: &tauri::AppHandle, event: &str, buf: &mut Vec<u8>) {
-    const KEEP_MAX: usize = 256 * 1024;
+    // Cap per-frame output at ~64 KiB. At the 16 ms flush cadence that is
+    // ~3.75 MiB/s reaching xterm — comfortably within what the WebGL
+    // renderer paints smoothly, so a `docker compose logs -f` history
+    // dump scrolls fast instead of freezing the UI. Follow-mode traffic
+    // is far below this, so live logs are never delayed.
+    const KEEP_MAX: usize = 64 * 1024;
     if buf.is_empty() {
         return;
     }

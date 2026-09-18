@@ -154,6 +154,7 @@ export function Terminal({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
   const terminalIdRef = useRef<string | null>(null);
   const { resolvedTheme } = useTheme();
 
@@ -171,6 +172,9 @@ export function Terminal({
   // Selected terminal color theme — live-applied so picking a theme in the
   // dialog recolors every open terminal at once.
   const terminalTheme = usePrefs((s) => s.terminalTheme);
+  // App-wide font size — the terminal shares the same knob as the UI so
+  // text size stays in sync everywhere.
+  const uiFontSize = usePrefs((s) => s.uiFontSize);
 
   // Keep the latest server-output callback in a ref so the listen
   // callback (set up once at mount) always calls the most recent
@@ -238,6 +242,15 @@ export function Terminal({
     }
   }, [resolvedTheme, terminalTheme]);
 
+  // Live font-size: follow the app-wide knob, then refit so the PTY grid
+  // matches the new cell size.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.fontSize = uiFontSize;
+    fitRef.current?.fit();
+  }, [uiFontSize]);
+
   useEffect(() => {
     if (!containerRef.current) return;
     let unlistenData: UnlistenFn | null = null;
@@ -251,7 +264,7 @@ export function Terminal({
       // closest system font to SF Mono), then Consolas.
       fontFamily:
         '"SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace',
-      fontSize: 14,
+      fontSize: usePrefs.getState().uiFontSize,
       // Windows renders these faces thinner than macOS does — nudge the
       // weight up so text reads as solid, not gray (Cascadia Mono is a
       // variable font, so 450 is honored, not synthesized).
@@ -283,6 +296,7 @@ export function Terminal({
       ),
     });
     const fit = new FitAddon();
+    fitRef.current = fit;
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(containerRef.current);
@@ -636,6 +650,7 @@ export function Terminal({
       onTerminalReady?.(null);
       term.dispose();
       termRef.current = null;
+      fitRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);

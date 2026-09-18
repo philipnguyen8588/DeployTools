@@ -15,12 +15,21 @@ import {
   Eye,
   EyeOff,
   Palette,
+  Type,
+  Minus,
+  Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import * as api from "@/lib/api";
-import { usePrefs, DEFAULT_HIGHLIGHT_KEYWORDS } from "@/stores/prefs";
+import {
+  usePrefs,
+  DEFAULT_HIGHLIGHT_KEYWORDS,
+  FONT_SIZE_MIN,
+  FONT_SIZE_MAX,
+  FONT_SIZE_DEFAULT,
+} from "@/stores/prefs";
 import {
   Dialog,
   DialogContent,
@@ -64,6 +73,8 @@ export function SettingsDialog({ onClose }: Props) {
   const [kwDraft, setKwDraft] = useState(() =>
     usePrefs.getState().highlightKeywords.join(", "),
   );
+  const uiFontSize = usePrefs((s) => s.uiFontSize);
+  const setUiFontSize = usePrefs((s) => s.setUiFontSize);
 
   async function loadActivity() {
     try {
@@ -426,6 +437,61 @@ export function SettingsDialog({ onClose }: Props) {
                   <span className="ml-1 rounded bg-yellow-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-yellow-600 dark:text-yellow-400">
                     DISABLED
                   </span>
+                )}
+              </div>
+            </div>
+
+            {/* Appearance — app-wide text size. Pure frontend pref
+                (localStorage), applies live, no restart. */}
+            <div className="space-y-2 border-t pt-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Type className="h-4 w-4 text-primary" />
+                Font size
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Scales all text across the app — sidebar, panels and the
+                terminal — together. Applies immediately.
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="icon-sm"
+                  variant="outline"
+                  disabled={uiFontSize <= FONT_SIZE_MIN}
+                  onClick={() => setUiFontSize(uiFontSize - 1)}
+                  title="Smaller"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </Button>
+                <span className="w-16 text-center text-sm font-medium tabular-nums">
+                  {uiFontSize}px
+                </span>
+                <Button
+                  size="icon-sm"
+                  variant="outline"
+                  disabled={uiFontSize >= FONT_SIZE_MAX}
+                  onClick={() => setUiFontSize(uiFontSize + 1)}
+                  title="Larger"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+                <input
+                  type="range"
+                  min={FONT_SIZE_MIN}
+                  max={FONT_SIZE_MAX}
+                  value={uiFontSize}
+                  onChange={(e) => setUiFontSize(Number(e.target.value))}
+                  className="ml-1 flex-1 accent-primary"
+                  aria-label="Font size"
+                />
+                {uiFontSize !== FONT_SIZE_DEFAULT && (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => setUiFontSize(FONT_SIZE_DEFAULT)}
+                    title={`Reset to ${FONT_SIZE_DEFAULT}px`}
+                  >
+                    Reset
+                  </Button>
                 )}
               </div>
             </div>

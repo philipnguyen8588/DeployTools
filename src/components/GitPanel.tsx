@@ -211,19 +211,11 @@ function ChangesView({
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-1.5 border-b bg-card p-1.5 text-xs">
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          className="shrink-0"
-          onClick={refresh}
-          disabled={loading}
-          title="Refresh"
-        >
-          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-        </Button>
+        {/* Select-all sits first so it lines up with the row checkboxes
+            (pl-3) in the list below; pl-1.5 matches that column. */}
         <button
           onClick={toggleAll}
-          className="shrink-0 rounded p-1 hover:bg-accent"
+          className="shrink-0 rounded py-1 pl-1.5 pr-1 hover:bg-accent"
           title={allChecked ? "Deselect all" : "Select all"}
         >
           {allChecked ? (
@@ -251,6 +243,16 @@ function ChangesView({
         <span className="min-w-0 flex-1 truncate text-right text-muted-foreground">
           {files.length} changed · {selected.size} selected
         </span>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          className="shrink-0"
+          onClick={refresh}
+          disabled={loading}
+          title="Refresh"
+        >
+          <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+        </Button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -465,12 +467,10 @@ function CommitFilesView({
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-1.5 border-b bg-card p-1.5 text-xs">
-        <Button size="icon-sm" variant="ghost" className="shrink-0" onClick={onBack} title="Back">
-          ←
-        </Button>
+        {/* Select-all first, aligned with the row checkboxes (pl-3) below. */}
         <button
           onClick={toggleAll}
-          className="shrink-0 rounded p-1 hover:bg-accent"
+          className="shrink-0 rounded py-1 pl-1.5 pr-1 hover:bg-accent"
           title={allChecked ? "Deselect all" : "Select all"}
         >
           {allChecked ? (
@@ -495,6 +495,9 @@ function CommitFilesView({
         <span className="min-w-0 flex-1 truncate text-right font-mono text-muted-foreground">
           {commit.short_hash} · {files.length} files · {selected.size} selected
         </span>
+        <Button size="icon-sm" variant="ghost" className="shrink-0" onClick={onBack} title="Back">
+          ←
+        </Button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
