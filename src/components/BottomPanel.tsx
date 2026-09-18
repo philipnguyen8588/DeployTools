@@ -390,12 +390,24 @@ export function BottomPanel({
           <div className="flex shrink-0 items-center gap-1 border-l px-1 py-1">
             <Button
               size="xs"
-              variant={highlightEnabled ? "secondary" : "ghost"}
-              onClick={() => toggleHighlight()}
+              variant={highlightEnabled ? "default" : "ghost"}
+              onClick={() => {
+                toggleHighlight();
+                // Explicit feedback — the toggle only affects NEW output
+                // (existing text keeps its color, and colors the server
+                // itself sends are never touched), so without a toast a
+                // quick test on an already-colored screen looks like the
+                // button did nothing.
+                toast.info(
+                  highlightEnabled
+                    ? "Output coloring off — applies to new output"
+                    : "Output coloring on — IPs & keywords in new output",
+                );
+              }}
               title={
                 highlightEnabled
-                  ? "Output coloring ON — click to turn off (IP addresses, keywords)"
-                  : "Output coloring OFF — click to turn on (IP addresses, keywords)"
+                  ? "Extra coloring of plain output (IPs, keywords) is ON — click to turn off. Colors sent by the server itself are unaffected."
+                  : "Extra coloring of plain output (IPs, keywords) is OFF — click to turn on. Colors sent by the server itself are unaffected."
               }
             >
               <Highlighter

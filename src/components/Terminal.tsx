@@ -75,18 +75,20 @@ const MACOS_ANSI = {
   brightWhite: "#E5E5E5",
 };
 
-/** Terminal.app "Clear Dark" — black bg, white text, gray block cursor. */
+/** macOS dark terminal, softened: near-black (not void-black) background
+ *  and gently dimmed text so long sessions don't glare. */
 const THEME_DARK = {
-  background: "#000000",
-  foreground: "#F2F2F2",
+  background: "#1E1E1E",
+  foreground: "#D6D6D6",
   cursor: "#8C8C8C",
-  selectionBackground: "#4D4D4D",
+  selectionBackground: "#404040",
   ...MACOS_ANSI,
 };
 
-/** Terminal.app "Clear Light" — white bg, soft black text. */
+/** macOS light terminal, softened: paper-white (not pure white) background
+ *  with Apple's soft label black. */
 const THEME_LIGHT = {
-  background: "#FFFFFF",
+  background: "#F7F7F7",
   foreground: "#262626",
   cursor: "#7F7F7F",
   selectionBackground: "#B3D7FF",
@@ -309,11 +311,11 @@ export function Terminal({
     // renders above the server's own MOTD / "Last login:" line. Server info
     // is read imperatively from the servers store (same pattern as the
     // sessions store below) so it doesn't join the effect deps.
-    // Project sessions get a `cd '<path>'; clear` auto-injected by the
-    // backend right after the first server output (see ssh/terminal.rs) —
-    // that clear would wipe the banner we just drew. So for those sessions
-    // we keep the banner string around and re-insert it directly after the
-    // clear sequence when it flows past in the output stream.
+    // Safety net: if anything clears the screen right after connect (a
+    // server that runs `clear` in its shell init, or the older backend
+    // auto-cd that cleared), the banner we just drew would be wiped. Keep
+    // the banner string around and re-insert it directly after any clear
+    // sequence seen in the connect window.
     let bannerReinject: string | null = null;
     let bannerDeadline = 0;
     if (usePrefs.getState().bannerEnabled && serverId) {
