@@ -4,6 +4,8 @@ A fast, all-in-one **desktop control panel for your servers** — SSH terminal, 
 
 **Stack:** Tauri 2 · Rust · React 18 · TypeScript · Tailwind + shadcn/ui · xterm.js (WebGL) · russh
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?style=flat-square&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/lipnguyen)
+
 ![DeployTools screenshot](docs/screenshot.png)
 
 > Runs on **Windows** and **macOS**. Encrypted, offline-first, minimal RAM (target < 150 MB with a few open sessions).
@@ -136,6 +138,14 @@ src/
 ```
 
 ---
+
+## Support
+
+DeployTools is free and open-source. If it saves you time, you can support development:
+
+<a href="https://buymeacoffee.com/lipnguyen"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" height="44" alt="Buy Me a Coffee"></a>
+
+☕ **[buymeacoffee.com/lipnguyen](https://buymeacoffee.com/lipnguyen)**
 
 ## License
 

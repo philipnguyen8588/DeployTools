@@ -9,6 +9,7 @@ import {
   Container,
   FolderTree,
   PlugZap,
+  Coffee,
 } from "lucide-react";
 
 import {
@@ -230,15 +231,26 @@ export function HelpDialog({ onClose }: Props) {
           </Section>
 
           {/* ---- Credits ---- */}
-          <div className="border-t pt-3 text-xs text-muted-foreground">
-            Made by{" "}
-            <span className="font-medium text-foreground">LipNguyen</span>
-            {" · "}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+            <div className="text-xs text-muted-foreground">
+              Made by{" "}
+              <span className="font-medium text-foreground">LipNguyen</span>
+              {" · "}
+              <a
+                href="mailto:philip.nguyen8588@gmail.com"
+                className="text-primary hover:underline"
+              >
+                philip.nguyen8588@gmail.com
+              </a>
+            </div>
             <a
-              href="mailto:philip.nguyen8588@gmail.com"
-              className="text-primary hover:underline"
+              href="https://buymeacoffee.com/lipnguyen"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-md bg-[#FFDD00] px-3 py-1.5 text-xs font-semibold text-black transition hover:brightness-95"
             >
-              philip.nguyen8588@gmail.com
+              <Coffee className="h-3.5 w-3.5" />
+              Buy me a coffee
             </a>
           </div>
         </div>
