@@ -7,6 +7,10 @@ import { useTheme } from "next-themes";
 
 import * as api from "@/lib/api";
 import { useSessions } from "@/stores/sessions";
+import { useServers } from "@/stores/servers";
+import { usePrefs } from "@/stores/prefs";
+import { buildBanner } from "@/lib/banner";
+import { AnsiHighlighter } from "@/lib/ansi-highlight";
 
 interface Props {
   sessionId: string;
@@ -107,6 +111,17 @@ export function Terminal({
   const termRef = useRef<XTerm | null>(null);
   const terminalIdRef = useRef<string | null>(null);
   const { resolvedTheme } = useTheme();
+
+  // Live-subscribe the output-colorization toggle so the quick button in
+  // the terminal toolbar takes effect immediately — the [sessionId] effect
+  // below reads this ref inside the term:// listener rather than closing
+  // over a stale value, and re-running the effect (which would remount the
+  // PTY) is avoided.
+  const highlightEnabled = usePrefs((s) => s.highlightEnabled);
+  const highlightOnRef = useRef(highlightEnabled);
+  useEffect(() => {
+    highlightOnRef.current = highlightEnabled;
+  }, [highlightEnabled]);
 
   // Keep the latest server-output callback in a ref so the listen
   // callback (set up once at mount) always calls the most recent
@@ -283,6 +298,36 @@ export function Terminal({
     fit.fit();
     const { cols, rows } = term;
 
+    // MobaXterm-style welcome banner — written BEFORE the async open() so it
+    // renders above the server's own MOTD / "Last login:" line. Server info
+    // is read imperatively from the servers store (same pattern as the
+    // sessions store below) so it doesn't join the effect deps.
+    if (usePrefs.getState().bannerEnabled && serverId) {
+      const sv = useServers
+        .getState()
+        .servers.find((s) => s.id === serverId);
+      if (sv) {
+        term.write(
+          buildBanner({
+            user: sv.user,
+            host: sv.host,
+            port: sv.port,
+            authKind: sv.auth_kind === "key" ? "key" : "password",
+            hasFingerprint: sv.has_fingerprint,
+            cols: term.cols,
+            theme: resolvedTheme === "dark" ? "dark" : "light",
+          }),
+        );
+      }
+    }
+
+    // One colorizer per terminal — carries escape/alt-screen state across
+    // the server output chunks. Gated live via highlightOnRef.
+    const highlighter = new AnsiHighlighter({
+      ipv4: true,
+      keywords: usePrefs.getState().highlightKeywords,
+    });
+
     (async () => {
       try {
         const tid = await api.termOpen(sessionId, cols, rows);
@@ -314,10 +359,17 @@ export function Terminal({
             bump();
             onServerOutputRef.current?.();
             const data = event.payload as unknown;
-            if (data instanceof Uint8Array) {
-              term.write(data);
-            } else if (Array.isArray(data)) {
-              term.write(new Uint8Array(data));
+            const u8 =
+              data instanceof Uint8Array
+                ? data
+                : Array.isArray(data)
+                  ? new Uint8Array(data)
+                  : null;
+            if (u8) {
+              // Always run the transform so its escape / alt-screen state
+              // stays accurate; the flag only gates whether it colorizes.
+              highlighter.setEnabled(highlightOnRef.current);
+              term.write(highlighter.transform(u8));
             } else if (typeof data === "string") {
               term.write(data);
             }

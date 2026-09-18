@@ -14,11 +14,13 @@ import {
   RefreshCw,
   Eye,
   EyeOff,
+  Palette,
 } from "lucide-react";
 import { toast } from "sonner";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import * as api from "@/lib/api";
+import { usePrefs, DEFAULT_HIGHLIGHT_KEYWORDS } from "@/stores/prefs";
 import {
   Dialog,
   DialogContent,
@@ -52,6 +54,16 @@ export function SettingsDialog({ onClose }: Props) {
   const [cmdMode, setCmdMode] = useState<string>("deny");
   const [denyDraft, setDenyDraft] = useState<string>("");
   const [activity, setActivity] = useState<api.McpActivityEntry[] | null>(null);
+
+  // Frontend-only terminal cosmetics (localStorage-backed, no vault/IPC).
+  const bannerEnabled = usePrefs((s) => s.bannerEnabled);
+  const setBannerEnabled = usePrefs((s) => s.setBannerEnabled);
+  const highlightEnabled = usePrefs((s) => s.highlightEnabled);
+  const setHighlightEnabled = usePrefs((s) => s.setHighlightEnabled);
+  const setKeywords = usePrefs((s) => s.setKeywords);
+  const [kwDraft, setKwDraft] = useState(() =>
+    usePrefs.getState().highlightKeywords.join(", "),
+  );
 
   async function loadActivity() {
     try {
@@ -415,6 +427,90 @@ export function SettingsDialog({ onClose }: Props) {
                     DISABLED
                   </span>
                 )}
+              </div>
+            </div>
+
+            {/* Terminal appearance — MobaXterm-style banner + colorization.
+                Pure frontend prefs (localStorage), no restart. */}
+            <div className="space-y-2 border-t pt-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Palette className="h-4 w-4 text-primary" />
+                Terminal
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-xs font-medium">Welcome banner</div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Show a MobaXterm-style session box (user@host, auth,
+                    capabilities) above the server's login message.
+                  </p>
+                </div>
+                <Button
+                  size="xs"
+                  variant={bannerEnabled ? "default" : "outline"}
+                  onClick={() => setBannerEnabled(!bannerEnabled)}
+                >
+                  {bannerEnabled ? "On" : "Off"}
+                </Button>
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-xs font-medium">Colorize output</div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Highlight IPv4 addresses and log keywords in plain output.
+                    Colors from the server (ls, git, vim…) are untouched.
+                  </p>
+                </div>
+                <Button
+                  size="xs"
+                  variant={highlightEnabled ? "default" : "outline"}
+                  onClick={() => setHighlightEnabled(!highlightEnabled)}
+                >
+                  {highlightEnabled ? "On" : "Off"}
+                </Button>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">
+                  Highlighted keywords (comma or newline separated)
+                </Label>
+                <textarea
+                  value={kwDraft}
+                  onChange={(e) => setKwDraft(e.target.value)}
+                  rows={2}
+                  spellCheck={false}
+                  className="w-full rounded border bg-background px-2 py-1 font-mono text-[11px]"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="xs"
+                    onClick={() => {
+                      const list = kwDraft
+                        .split(/[\n,]/)
+                        .map((s) => s.trim())
+                        .filter(Boolean);
+                      setKeywords(list);
+                      setKwDraft(list.join(", "));
+                      toast.success("Keywords updated");
+                    }}
+                  >
+                    Save keywords
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => setKwDraft(DEFAULT_HIGHLIGHT_KEYWORDS.join(", "))}
+                  >
+                    Reset to defaults
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Banner + keyword changes apply to terminals opened after the
+                  change. The <strong>Colors</strong> toggle in the terminal
+                  toolbar takes effect immediately.
+                </p>
               </div>
             </div>
 

@@ -13,12 +13,14 @@ import {
   RefreshCcw,
   Search,
   History as HistoryIcon,
+  Highlighter,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 import * as api from "@/lib/api";
 import { useSessions } from "@/stores/sessions";
+import { usePrefs } from "@/stores/prefs";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 // Terminal + ActivityConsole are eagerly imported — Terminal is the
@@ -139,6 +141,11 @@ export function BottomPanel({
   const sessionActivity = useSessions(
     (s) => s.tabs.find((t) => t.session.id === sessionId)?.lastActivityAt ?? 0,
   );
+
+  // Quick output-colorization toggle, mirrored from the prefs store so the
+  // toolbar button reflects (and flips) the live state.
+  const highlightEnabled = usePrefs((s) => s.highlightEnabled);
+  const toggleHighlight = usePrefs((s) => s.toggleHighlight);
 
   // Initialise lastSeen for whichever tab the user is on right now.
   // Without this, a brand-new tab's lastSeen starts at 0 and any
@@ -381,6 +388,24 @@ export function BottomPanel({
             input + refresh. Other tabs → nothing. */}
         {activeIsTerminal && (
           <div className="flex shrink-0 items-center gap-1 border-l px-1 py-1">
+            <Button
+              size="xs"
+              variant={highlightEnabled ? "secondary" : "ghost"}
+              onClick={() => toggleHighlight()}
+              title={
+                highlightEnabled
+                  ? "Output coloring ON — click to turn off (IP addresses, keywords)"
+                  : "Output coloring OFF — click to turn on (IP addresses, keywords)"
+              }
+            >
+              <Highlighter
+                className={cn(
+                  "mr-1 h-3 w-3",
+                  !highlightEnabled && "text-muted-foreground",
+                )}
+              />
+              Colors
+            </Button>
             <Button
               size="xs"
               variant="ghost"
