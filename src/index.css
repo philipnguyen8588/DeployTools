@@ -3,70 +3,75 @@
 @tailwind utilities;
 
 @layer base {
+  /* Light theme — macOS appearance. Text is Apple's soft label black
+     (#1D1D1F) instead of harsh near-black, secondary text matches
+     NSColor.secondaryLabelColor (#6E6E73), and the accent is macOS
+     system blue (#007AFF). */
   :root {
     --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --foreground: 240 3% 12%;            /* #1D1D1F — Apple label black */
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 240 3% 12%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 240 3% 12%;
 
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 211 100% 50%;             /* #007AFF — macOS system blue */
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 240 5% 96%;             /* #F4F4F5 neutral, no blue cast */
+    --secondary-foreground: 240 3% 12%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 2% 44%;      /* #6E6E73 — secondaryLabel */
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 240 5% 96%;
+    --accent-foreground: 240 3% 12%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 4 100% 59%;           /* #FF3B30 — macOS system red */
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
+    --border: 240 5% 90%;
+    --input: 240 5% 90%;
+    --ring: 211 100% 50%;
 
     --radius: 0.5rem;
   }
 
-  /* Dark theme — soft gray with a hint of blue. Kept significantly
-     lighter than pure black so panels feel tactile instead of "voidy".
-     The background sits around #282B30; cards / popovers step up a few
-     points each for gentle elevation. */
+  /* Dark theme — macOS dark appearance (see macos-term/setting-dark.png):
+     neutral grays with NO blue cast, like an NSWindow in dark mode.
+     Background ≈ the settings-window gray (#292929); cards / popovers
+     step up a few points each for gentle elevation. Accent is macOS
+     dark-mode system blue (#0A84FF). */
   .dark {
-    --background: 220 8% 17%;            /* #282B30 */
-    --foreground: 220 15% 92%;           /* #E6E9EF */
+    --background: 0 0% 16%;              /* #292929 — window gray */
+    --foreground: 0 0% 95%;              /* #F2F2F2 */
 
-    --card: 220 7% 21%;                  /* #32353A */
-    --card-foreground: 220 15% 92%;
+    --card: 0 0% 19%;                    /* #303030 */
+    --card-foreground: 0 0% 95%;
 
-    --popover: 220 7% 22%;               /* #34373D */
-    --popover-foreground: 220 15% 92%;
+    --popover: 0 0% 20%;                 /* #333333 */
+    --popover-foreground: 0 0% 95%;
 
-    --primary: 217 85% 58%;              /* a touch brighter on the grey bg */
+    --primary: 211 100% 52%;             /* #0A84FF — dark system blue */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 220 6% 26%;             /* #3D4045 */
-    --secondary-foreground: 220 15% 92%;
+    --secondary: 0 0% 21%;               /* #363636 */
+    --secondary-foreground: 0 0% 95%;
 
-    --muted: 220 6% 26%;
-    --muted-foreground: 220 8% 70%;      /* readable against grey cards */
+    --muted: 0 0% 21%;
+    --muted-foreground: 240 2% 61%;      /* #98989D — secondaryLabel dark */
 
-    --accent: 220 5% 31%;                /* #474A4F (hover / selected) */
-    --accent-foreground: 220 15% 95%;
+    --accent: 0 0% 23%;                  /* #3A3A3A (hover / selected) */
+    --accent-foreground: 0 0% 96%;
 
-    --destructive: 0 70% 58%;
+    --destructive: 3 100% 61%;           /* #FF453A — dark system red */
     --destructive-foreground: 0 0% 100%;
 
-    --border: 220 6% 30%;                /* visible but not loud */
-    --input: 220 7% 24%;
-    --ring: 217 85% 58%;
+    --border: 0 0% 24%;                  /* #3D3D3D */
+    --input: 0 0% 20%;
+    --ring: 211 100% 52%;
   }
 }
 

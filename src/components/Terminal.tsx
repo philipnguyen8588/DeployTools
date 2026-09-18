@@ -9,7 +9,7 @@ import * as api from "@/lib/api";
 import { useSessions } from "@/stores/sessions";
 import { useServers } from "@/stores/servers";
 import { usePrefs } from "@/stores/prefs";
-import { buildBanner } from "@/lib/banner";
+import { buildBanner, indexAfterLastClear } from "@/lib/banner";
 import { AnsiHighlighter } from "@/lib/ansi-highlight";
 
 interface Props {
@@ -47,55 +47,50 @@ interface Props {
 }
 
 /**
- * Dark palette that matches the app's theme. Background mirrors the
- * `--background` var (`#282B30`, soft gray) so terminal tabs blend
- * visually with the surrounding panel.
+ * macOS Terminal.app palettes. Both themes use Apple's stock ANSI colors
+ * (the swatch row you see in Terminal → Settings → Profiles), so output
+ * looks exactly like it does on a Mac.
+ *
+ * Dark = the "Clear Dark" profile (see macos-term/setting-dark.png).
+ * xterm's minimumContrastRatio (set at construction) auto-lifts the dark
+ * ANSI blue/red when they'd be unreadable on the black background — same
+ * readability trick Terminal.app applies.
  */
-const THEME_DARK = {
-  background: "#282B30",
-  foreground: "#E6E9EF",
-  cursor: "#4C8CEF",
-  selectionBackground: "#2D4A6E",
-  black: "#3A3D44",
-  red: "#FF6B6B",
-  green: "#7EE787",
-  yellow: "#F2CC60",
-  blue: "#79C0FF",
-  magenta: "#D2A8FF",
-  cyan: "#A5D6FF",
-  white: "#E6E9EF",
-  brightBlack: "#6E7681",
-  brightRed: "#FFA198",
-  brightGreen: "#56D364",
-  brightYellow: "#E3B341",
-  brightBlue: "#79C0FF",
-  brightMagenta: "#D2A8FF",
-  brightCyan: "#A5D6FF",
-  brightWhite: "#F0F6FC",
+const MACOS_ANSI = {
+  black: "#000000",
+  red: "#990000",
+  green: "#00A600",
+  yellow: "#999900",
+  blue: "#0000B2",
+  magenta: "#B200B2",
+  cyan: "#00A6B2",
+  white: "#BFBFBF",
+  brightBlack: "#666666",
+  brightRed: "#E50000",
+  brightGreen: "#00D900",
+  brightYellow: "#E5E500",
+  brightBlue: "#0000FF",
+  brightMagenta: "#E500E5",
+  brightCyan: "#00E5E5",
+  brightWhite: "#E5E5E5",
 };
 
-/** GitHub light palette. */
+/** Terminal.app "Clear Dark" — black bg, white text, gray block cursor. */
+const THEME_DARK = {
+  background: "#000000",
+  foreground: "#F2F2F2",
+  cursor: "#8C8C8C",
+  selectionBackground: "#4D4D4D",
+  ...MACOS_ANSI,
+};
+
+/** Terminal.app "Clear Light" — white bg, soft black text. */
 const THEME_LIGHT = {
-  background: "#ffffff",
-  foreground: "#1f2328",
-  cursor: "#0969da",
-  selectionBackground: "#b6e3ff",
-  black: "#24292f",
-  red: "#cf222e",
-  green: "#1a7f37",
-  yellow: "#9a6700",
-  blue: "#0969da",
-  magenta: "#8250df",
-  cyan: "#1b7c83",
-  white: "#6e7781",
-  brightBlack: "#57606a",
-  brightRed: "#a40e26",
-  brightGreen: "#116329",
-  brightYellow: "#4d2d00",
-  brightBlue: "#0550ae",
-  brightMagenta: "#6639ba",
-  brightCyan: "#3192aa",
-  brightWhite: "#8c959f",
+  background: "#FFFFFF",
+  foreground: "#262626",
+  cursor: "#7F7F7F",
+  selectionBackground: "#B3D7FF",
+  ...MACOS_ANSI,
 };
 
 export function Terminal({
@@ -194,9 +189,21 @@ export function Terminal({
     let disposed = false;
 
     const term = new XTerm({
-      fontFamily: '"JetBrains Mono", ui-monospace, Menlo, monospace',
+      // macOS Terminal.app look: SF Mono first (picked up automatically if
+      // the user installs it — Apple's license forbids bundling), then
+      // Menlo (mac), then Cascadia Mono (ships with Windows 11 and is the
+      // closest system font to SF Mono), then Consolas.
+      fontFamily:
+        '"SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace',
       fontSize: 13,
-      cursorBlink: true,
+      // SF Mono's roomy vertical rhythm — Terminal.app spacing.
+      lineHeight: 1.2,
+      // Terminal.app default: steady block cursor (blink is off).
+      cursorStyle: "block",
+      cursorBlink: false,
+      // Auto-lift unreadable combos (e.g. ANSI dark blue on the dark
+      // background) — mirrors Terminal.app's minimum-contrast behavior.
+      minimumContrastRatio: 3,
       allowProposedApi: true,
       // 2k lines is ~200-400 KB per terminal (vs 500 KB-1 MB at 5k).
       // Users who need more can scroll back to their shell's own buffer
@@ -302,22 +309,37 @@ export function Terminal({
     // renders above the server's own MOTD / "Last login:" line. Server info
     // is read imperatively from the servers store (same pattern as the
     // sessions store below) so it doesn't join the effect deps.
+    // Project sessions get a `cd '<path>'; clear` auto-injected by the
+    // backend right after the first server output (see ssh/terminal.rs) —
+    // that clear would wipe the banner we just drew. So for those sessions
+    // we keep the banner string around and re-insert it directly after the
+    // clear sequence when it flows past in the output stream.
+    let bannerReinject: string | null = null;
+    let bannerDeadline = 0;
     if (usePrefs.getState().bannerEnabled && serverId) {
       const sv = useServers
         .getState()
         .servers.find((s) => s.id === serverId);
       if (sv) {
-        term.write(
-          buildBanner({
-            user: sv.user,
-            host: sv.host,
-            port: sv.port,
-            authKind: sv.auth_kind === "key" ? "key" : "password",
-            hasFingerprint: sv.has_fingerprint,
-            cols: term.cols,
-            theme: resolvedTheme === "dark" ? "dark" : "light",
-          }),
-        );
+        const banner = buildBanner({
+          user: sv.user,
+          host: sv.host,
+          port: sv.port,
+          authKind: sv.auth_kind === "key" ? "key" : "password",
+          hasFingerprint: sv.has_fingerprint,
+          cols: term.cols,
+          theme: resolvedTheme === "dark" ? "dark" : "light",
+        });
+        term.write(banner);
+        const hasProject = useSessions
+          .getState()
+          .tabs.find((t) => t.session.id === sessionId)?.session.project_id;
+        if (hasProject) {
+          bannerReinject = banner;
+          // Watch only the connect window — a `clear` typed by the user
+          // minutes later must NOT resurrect the banner.
+          bannerDeadline = Date.now() + 15_000;
+        }
       }
     }
 
@@ -369,7 +391,22 @@ export function Terminal({
               // Always run the transform so its escape / alt-screen state
               // stays accurate; the flag only gates whether it colorizes.
               highlighter.setEnabled(highlightOnRef.current);
-              term.write(highlighter.transform(u8));
+              let out = highlighter.transform(u8);
+              // Re-insert the banner right after the backend's auto-cd
+              // `clear` so it survives on the cleaned screen. One-shot,
+              // and only within the connect window.
+              if (bannerReinject) {
+                if (Date.now() > bannerDeadline) {
+                  bannerReinject = null;
+                } else {
+                  const pos = indexAfterLastClear(out);
+                  if (pos !== -1) {
+                    out = out.slice(0, pos) + bannerReinject + out.slice(pos);
+                    bannerReinject = null;
+                  }
+                }
+              }
+              term.write(out);
             } else if (typeof data === "string") {
               term.write(data);
             }

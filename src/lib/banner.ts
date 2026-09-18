@@ -22,6 +22,26 @@ function truncate(s: string, max: number): string {
   return `${s.slice(0, max - 1)}…`;
 }
 
+/**
+ * Index just past the LAST full-screen-clear escape in `s`, or -1 if none.
+ * Recognizes ED2 (`\x1b[2J`), ED3 (`\x1b[3J`) and RIS (`\x1bc`) — the
+ * sequences emitted by `clear` / `printf '\033c'`.
+ *
+ * Used to survive the backend's auto-cd: project sessions get a
+ * `cd '<path>'; clear` injected right after connect (to hide the echoed
+ * cd), which wipes the just-written banner. The Terminal component watches
+ * the first output for one of these sequences and re-inserts the banner
+ * immediately after it, so it ends up on top of the cleaned screen.
+ */
+export function indexAfterLastClear(s: string): number {
+  let best = -1;
+  for (const seq of ["\x1b[2J", "\x1b[3J", "\x1bc"]) {
+    const i = s.lastIndexOf(seq);
+    if (i !== -1 && i + seq.length > best) best = i + seq.length;
+  }
+  return best;
+}
+
 export interface BannerOpts {
   user: string;
   host: string;
