@@ -8,11 +8,22 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use russh_sftp::client::SftpSession;
+use futures::stream::{FuturesUnordered, StreamExt};
+use russh_sftp::client::{RawSftpSession, SftpSession};
 use russh_sftp::protocol::{FileAttributes, OpenFlags};
 use tauri::Emitter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
+
+/// SFTP write chunk size. 255 KiB is the largest OpenSSH accepts in one
+/// WRITE packet by default (`limits@openssh.com` write_len), so this is
+/// the biggest safe chunk.
+const UPLOAD_CHUNK: usize = 255 * 1024;
+/// How many WRITE requests to keep in flight at once. Pipelining fills the
+/// SSH channel's send window instead of stalling one-RTT per chunk, which
+/// is the whole point — a single-request-at-a-time upload caps out around
+/// chunk/RTT (~1 MB/s on a 50 ms link) regardless of bandwidth.
+const UPLOAD_INFLIGHT: usize = 16;
 
 use crate::errors::{AppError, AppResult};
 use crate::ssh::activity;
@@ -191,79 +202,145 @@ pub async fn rename(session: &SshSession, from: &str, to: &str) -> AppResult<()>
     Ok(())
 }
 
-/// Upload a local file to a remote path. Creates parent dirs if needed.
-/// Emits `sftp-progress://{session_id}` events while copying.
-pub async fn upload(
+/// Open a low-level `RawSftpSession` on a fresh SFTP channel. Uploads use
+/// this instead of the high-level `SftpSession` so they can pipeline many
+/// `write` requests concurrently (the high-level `File` AsyncWrite issues
+/// one WRITE at a time and awaits its ACK — the slow path).
+async fn open_raw_sftp(session: &SshSession) -> AppResult<RawSftpSession> {
+    let handle = session.handle.lock().await;
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| AppError::Ssh(format!("sftp channel: {e}")))?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| AppError::Ssh(format!("request sftp: {e}")))?;
+    drop(handle);
+    let raw = RawSftpSession::new(channel.into_stream());
+    raw.init()
+        .await
+        .map_err(|e| AppError::Sftp(format!("sftp init: {e}")))?;
+    Ok(raw)
+}
+
+/// `mkdir -p` over a raw session. Best-effort — "already exists" errors are
+/// ignored (SFTP has no MKDIR-if-not-exists).
+async fn mkdir_raw(raw: &RawSftpSession, path: &str) {
+    let mut acc = String::new();
+    for comp in path.trim_start_matches('/').split('/') {
+        if comp.is_empty() {
+            continue;
+        }
+        if !acc.is_empty() || path.starts_with('/') {
+            acc.push('/');
+        }
+        acc.push_str(comp);
+        let _ = raw.mkdir(acc.clone(), FileAttributes::default()).await;
+    }
+}
+
+/// Read up to `buf.len()` bytes, looping over short reads so every chunk
+/// but the last is a full `UPLOAD_CHUNK` (fewer, larger WRITE packets).
+async fn fill(f: &mut tokio::fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        let n = f.read(&mut buf[filled..]).await?;
+        if n == 0 {
+            break;
+        }
+        filled += n;
+    }
+    Ok(filled)
+}
+
+/// Upload one file over an already-open raw session, pipelining up to
+/// `UPLOAD_INFLIGHT` WRITE requests. The caller must ensure the parent
+/// directory exists (see `upload` / `upload_batch`).
+async fn upload_raw(
+    raw: &RawSftpSession,
     session: &SshSession,
     local_path: &Path,
     remote_path: &str,
 ) -> AppResult<()> {
-    // Ensure parent dir exists.
-    if let Some(parent) = parent_of(remote_path) {
-        if !parent.is_empty() && parent != "/" {
-            mkdir(session, parent).await?;
-        }
-    }
-
-    let sftp = open_sftp(session).await?;
-    let sftp = sftp.lock().await;
-
-    let mut remote = sftp
-        .open_with_flags(
+    let total = tokio::fs::metadata(local_path).await?.len();
+    let handle = raw
+        .open(
             remote_path,
             OpenFlags::CREATE | OpenFlags::WRITE | OpenFlags::TRUNCATE,
+            FileAttributes::default(),
         )
         .await
-        .map_err(|e| AppError::Sftp(format!("open remote: {e}")))?;
-
-    let total = tokio::fs::metadata(local_path).await?.len();
-    let mut local = tokio::fs::File::open(local_path).await?;
-    let mut buf = vec![0u8; 64 * 1024];
-    let mut written: u64 = 0;
+        .map_err(|e| AppError::Sftp(format!("open remote: {e}")))?
+        .handle;
 
     activity::info(
         &session.app,
         "sftp",
-        format!(
-            "↑ upload {} → {remote_path} ({} bytes)",
-            local_path.display(),
-            total
-        ),
+        format!("↑ upload {} → {remote_path} ({total} bytes)", local_path.display()),
         Some(&session.id),
     );
 
+    let mut local = tokio::fs::File::open(local_path).await?;
     let progress_event = format!("sftp-progress://{}", session.id);
-    loop {
-        let n = local.read(&mut buf).await?;
-        if n == 0 {
-            break;
+    let mut offset: u64 = 0;
+    let mut written: u64 = 0;
+    let mut last_emit: u64 = 0;
+    let mut done_reading = false;
+    let mut inflight = FuturesUnordered::new();
+
+    // Any pipelined write error must still let us close the handle.
+    let result: AppResult<()> = async {
+        while !done_reading || !inflight.is_empty() {
+            // Top up the pipeline.
+            while inflight.len() < UPLOAD_INFLIGHT && !done_reading {
+                let mut buf = vec![0u8; UPLOAD_CHUNK];
+                let n = fill(&mut local, &mut buf).await?;
+                if n == 0 {
+                    done_reading = true;
+                    break;
+                }
+                buf.truncate(n);
+                let off = offset;
+                offset += n as u64;
+                let h = handle.clone();
+                inflight.push(async move {
+                    raw.write(h, off, buf)
+                        .await
+                        .map(|_| n as u64)
+                        .map_err(|e| AppError::Sftp(format!("write: {e}")))
+                });
+            }
+            if let Some(res) = inflight.next().await {
+                written += res?;
+                if written - last_emit >= 1024 * 1024
+                    || (done_reading && inflight.is_empty())
+                {
+                    last_emit = written;
+                    let _ = session.app.emit(
+                        &progress_event,
+                        ProgressEvent {
+                            phase: "upload",
+                            path: remote_path.to_string(),
+                            written,
+                            total,
+                        },
+                    );
+                }
+            }
         }
-        remote
-            .write_all(&buf[..n])
-            .await
-            .map_err(|e| AppError::Sftp(format!("write: {e}")))?;
-        written += n as u64;
-        let _ = session.app.emit(
-            &progress_event,
-            ProgressEvent {
-                phase: "upload",
-                path: remote_path.to_string(),
-                written,
-                total,
-            },
-        );
+        Ok(())
     }
-    remote
-        .flush()
+    .await;
+
+    // Close deterministically (awaited) so the write is committed before we
+    // return — best-effort on the error path.
+    let close = raw
+        .close(handle)
         .await
-        .map_err(|e| AppError::Sftp(format!("flush: {e}")))?;
-    // Close the remote handle deterministically (awaited), so the write is
-    // fully committed before we return. Relying on `Drop` here would fire
-    // an un-awaited close and race anything that touches the file next.
-    remote
-        .shutdown()
-        .await
-        .map_err(|e| AppError::Sftp(format!("close: {e}")))?;
+        .map_err(|e| AppError::Sftp(format!("close: {e}")));
+    result?;
+    close?;
 
     activity::success(
         &session.app,
@@ -272,6 +349,60 @@ pub async fn upload(
         Some(&session.id),
     );
     Ok(())
+}
+
+/// Upload a local file to a remote path. Creates parent dirs if needed.
+/// Emits `sftp-progress://{session_id}` events while copying. Opens a
+/// dedicated raw session for the transfer.
+pub async fn upload(
+    session: &SshSession,
+    local_path: &Path,
+    remote_path: &str,
+) -> AppResult<()> {
+    let raw = open_raw_sftp(session).await?;
+    if let Some(parent) = parent_of(remote_path) {
+        if !parent.is_empty() && parent != "/" {
+            mkdir_raw(&raw, parent).await;
+        }
+    }
+    upload_raw(&raw, session, local_path, remote_path).await
+}
+
+/// Upload many files over a SINGLE raw session (one channel + one SFTP
+/// handshake for the whole batch, instead of per file). `on_file` is
+/// called with the running count after each successful upload; return
+/// `false` from `should_cancel` to stop early. Returns the count uploaded.
+pub async fn upload_batch(
+    session: &SshSession,
+    files: &[(std::path::PathBuf, String)],
+    mut on_file: impl FnMut(u32, &str),
+    should_cancel: impl Fn() -> bool,
+) -> AppResult<u32> {
+    let raw = open_raw_sftp(session).await?;
+
+    // Pre-create every unique parent directory once (shallow → deep so
+    // ancestors come first), instead of `mkdir -p` per file.
+    let mut dirs: Vec<&str> = files
+        .iter()
+        .filter_map(|(_, remote)| parent_of(remote))
+        .filter(|p| !p.is_empty() && *p != "/")
+        .collect();
+    dirs.sort_unstable();
+    dirs.dedup();
+    for d in dirs {
+        mkdir_raw(&raw, d).await;
+    }
+
+    let mut uploaded = 0u32;
+    for (local, remote) in files {
+        if should_cancel() {
+            break;
+        }
+        upload_raw(&raw, session, local, remote).await?;
+        uploaded += 1;
+        on_file(uploaded, remote);
+    }
+    Ok(uploaded)
 }
 
 pub async fn download(

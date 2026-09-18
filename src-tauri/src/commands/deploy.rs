@@ -89,11 +89,12 @@ pub async fn cancel_deploy(job_id: String, state: State<'_, AppState>) -> AppRes
 
 /// Upload one project-relative file to its mapped remote path (with an
 /// escape guard). Shared by `deploy_file` and `deploy_files`.
-async fn upload_one(
+/// Resolve + validate the (local, remote) path pair for a project-relative
+/// file, guarding against path traversal outside the project root.
+async fn resolve_upload_path(
     project: &Project,
-    session: &Arc<SshSession>,
     relative_path: &str,
-) -> AppResult<()> {
+) -> AppResult<(std::path::PathBuf, String)> {
     let local_full = project.local_path.join(relative_path);
     let canon_local = tokio::fs::canonicalize(&local_full).await?;
     let canon_base = tokio::fs::canonicalize(&project.local_path).await?;
@@ -105,6 +106,15 @@ async fn upload_one(
     let remote_rel = relative_path.replace('\\', "/");
     let remote_full = join_remote(&project.remote_path, &remote_rel);
     sftp::validate_remote_path(&remote_full)?;
+    Ok((local_full, remote_full))
+}
+
+async fn upload_one(
+    project: &Project,
+    session: &Arc<SshSession>,
+    relative_path: &str,
+) -> AppResult<()> {
+    let (local_full, remote_full) = resolve_upload_path(project, relative_path).await?;
     sftp::upload(session, &local_full, &remote_full).await
 }
 
@@ -146,24 +156,27 @@ pub async fn deploy_files(
     };
     let cancel = CancelGuard::new(state.inner(), job_id.clone());
     let total = relative_paths.len() as u32;
-    let mut uploaded = 0u32;
+
+    // Resolve+validate all paths, then upload the batch over a single SFTP
+    // channel with pipelined writes.
+    let mut pairs = Vec::with_capacity(relative_paths.len());
     for rel in &relative_paths {
-        if cancel.cancelled() {
-            break;
-        }
-        if let Err(e) = upload_one(&project, &session, rel).await {
-            crate::ssh::activity::error(
-                &state.app,
-                "sftp",
-                format!("✗ {rel}: {e}"),
-                Some(&session.id),
-            );
-            return Err(e);
-        }
-        uploaded += 1;
-        emit_progress(&state.app, &job_id, uploaded, total, rel);
+        pairs.push(resolve_upload_path(&project, rel).await?);
     }
-    Ok(uploaded)
+    let app = state.app.clone();
+    let job = job_id.clone();
+    let sid = session.id.clone();
+    crate::ssh::sftp::upload_batch(
+        &session,
+        &pairs,
+        |n, remote| emit_progress(&app, &job, n, total, remote),
+        || cancel.cancelled(),
+    )
+    .await
+    .map_err(|e| {
+        crate::ssh::activity::error(&state.app, "sftp", format!("✗ upload: {e}"), Some(&sid));
+        e
+    })
 }
 
 /// Recursively upload a local directory to its mirrored remote path.
@@ -233,45 +246,53 @@ pub async fn deploy_folder(
         Some(&session.id),
     );
 
-    // Upload each file, creating parent dirs as needed (mkdir -p is cheap).
+    // Upload the whole tree over a single SFTP channel with pipelined
+    // writes (one channel + handshake for the batch, dirs pre-created once).
     let cancel = CancelGuard::new(state.inner(), job_id.clone());
     let total = files.len() as u32;
-    let mut uploaded: u32 = 0;
-    for rel in &files {
-        if cancel.cancelled() {
-            crate::ssh::activity::warn(
-                &state.app,
-                "sftp",
-                format!("folder upload cancelled after {uploaded}/{total} files"),
-                Some(&session.id),
-            );
-            break;
-        }
-        let local_full = canon_local_root.join(rel);
-        let remote_full = if remote_root.is_empty() {
-            rel.clone()
-        } else {
-            format!("{}/{}", remote_root.trim_end_matches('/'), rel)
-        };
-        if let Err(e) = crate::ssh::sftp::upload(&session, &local_full, &remote_full).await {
-            crate::ssh::activity::error(
-                &state.app,
-                "sftp",
-                format!("✗ {remote_full}: {e}"),
-                Some(&session.id),
-            );
-            return Err(e);
-        }
-        uploaded += 1;
-        emit_progress(&state.app, &job_id, uploaded, total, rel);
-    }
+    let pairs: Vec<(std::path::PathBuf, String)> = files
+        .iter()
+        .map(|rel| {
+            let local_full = canon_local_root.join(rel);
+            let remote_full = if remote_root.is_empty() {
+                rel.clone()
+            } else {
+                format!("{}/{}", remote_root.trim_end_matches('/'), rel)
+            };
+            (local_full, remote_full)
+        })
+        .collect();
 
-    crate::ssh::activity::success(
-        &state.app,
-        "sftp",
-        format!("✓ folder upload done ({uploaded} files → {remote_root})"),
-        Some(&session.id),
-    );
+    let app = state.app.clone();
+    let job = job_id.clone();
+    let sid = session.id.clone();
+    let uploaded = crate::ssh::sftp::upload_batch(
+        &session,
+        &pairs,
+        |n, remote| emit_progress(&app, &job, n, total, remote),
+        || cancel.cancelled(),
+    )
+    .await
+    .map_err(|e| {
+        crate::ssh::activity::error(&state.app, "sftp", format!("✗ upload: {e}"), Some(&sid));
+        e
+    })?;
+
+    if cancel.cancelled() {
+        crate::ssh::activity::warn(
+            &state.app,
+            "sftp",
+            format!("folder upload cancelled after {uploaded}/{total} files"),
+            Some(&session.id),
+        );
+    } else {
+        crate::ssh::activity::success(
+            &state.app,
+            "sftp",
+            format!("✓ folder upload done ({uploaded} files → {remote_root})"),
+            Some(&session.id),
+        );
+    }
 
     Ok(uploaded)
 }
