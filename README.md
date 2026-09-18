@@ -1,14 +1,18 @@
 # DeployTools
 
-A fast, all-in-one **desktop control panel for your servers** — SSH terminal, SFTP file sync, Git deploy, Docker, systemd, metrics, tunnels and more, in one native app. Inspired by JetBrains' Deployment tool and MobaXterm.
+A fast, all-in-one **desktop control panel for your servers** — SSH terminal, SFTP file sync, Git deploy, Docker, systemd, metrics, tunnels and more, in one native app. A free, open-source **MobaXterm / WinSCP / Termius / JetBrains Deployment alternative** for Windows and macOS.
 
 **Stack:** Tauri 2 · Rust · React 18 · TypeScript · Tailwind + shadcn/ui · xterm.js (WebGL) · russh
 
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0a84ff?style=flat-square)
+[![Release](https://img.shields.io/github/v/release/philipnguyen8588/DeployTools?style=flat-square)](https://github.com/philipnguyen8588/DeployTools/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](#license)
+[![Stars](https://img.shields.io/github/stars/philipnguyen8588/DeployTools?style=flat-square)](https://github.com/philipnguyen8588/DeployTools/stargazers)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?style=flat-square&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/lipnguyen)
 
 ![DeployTools screenshot](docs/screenshot.png)
 
-> Runs on **Windows** and **macOS**. Encrypted, offline-first, minimal RAM (target < 150 MB with a few open sessions).
+> Runs on **Windows** and **macOS**. Encrypted, offline-first, minimal RAM (target < 150 MB with a few open sessions). Keywords: SSH client, SFTP client, terminal, deploy tool, bastion / jump host, Docker & systemd control, server manager.
 
 ---
 

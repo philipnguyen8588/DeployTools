@@ -1,10 +1,15 @@
 [package]
 name = "deploy-tools"
 version = "0.1.0"
-description = "Desktop tool to deploy web apps from local to server via SSH"
-authors = ["DeployTools"]
+description = "Fast all-in-one desktop app to manage & deploy to servers — SSH terminal, SFTP sync, Git deploy, Docker, metrics. A MobaXterm / JetBrains Deployment alternative."
+authors = ["LipNguyen <philip.nguyen8588@gmail.com>"]
 edition = "2021"
 rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/philipnguyen8588/DeployTools"
+homepage = "https://github.com/philipnguyen8588/DeployTools"
+keywords = ["ssh", "sftp", "deployment", "terminal", "devops"]
+categories = ["command-line-utilities", "development-tools"]
 
 [lib]
 name = "deploy_tools_lib"
