@@ -41,3 +41,6 @@ vault.enc
 # Icons regenerated from source PNG
 # (keep source app_icon*.png but generated assets can be regenerated)
 /src-ui/DeployTools/
+
+# Local screenshots / scratch (may contain sensitive info)
+/data/

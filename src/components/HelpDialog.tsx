@@ -228,6 +228,19 @@ export function HelpDialog({ onClose }: Props) {
               <li>Git branch + HEAD are shown when the project is a repo.</li>
             </ul>
           </Section>
+
+          {/* ---- Credits ---- */}
+          <div className="border-t pt-3 text-xs text-muted-foreground">
+            Made by{" "}
+            <span className="font-medium text-foreground">LipNguyen</span>
+            {" · "}
+            <a
+              href="mailto:philip.nguyen8588@gmail.com"
+              className="text-primary hover:underline"
+            >
+              philip.nguyen8588@gmail.com
+            </a>
+          </div>
         </div>
 
         <DialogFooter className="pt-2">
