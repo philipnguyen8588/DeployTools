@@ -88,15 +88,17 @@ pub async fn open(
         let event_name = format!("term://{}", term_id);
         let exit_event = format!("term-exit://{}", term_id);
 
-        // Output coalescing. Line-buffered producers (`docker compose
-        // logs -f`, verbose builds) generate hundreds of tiny Data
-        // messages per second; forwarding each as its own Tauri event
-        // floods the webview IPC (every payload is JSON-serialized) and
-        // freezes the UI. Buffer server output and flush at most once
-        // per 16 ms (one frame) or when 128 KiB has accumulated. After
-        // an idle period the interval has a tick "banked", so a lone
-        // keystroke echo still flushes immediately — no felt latency.
-        const FLUSH_MAX: usize = 128 * 1024;
+        // Output coalescing + flood shedding. Line-buffered producers
+        // (`docker compose logs -f`, verbose builds) generate hundreds of
+        // tiny Data messages per second; forwarding each as its own Tauri
+        // event floods the webview IPC (every payload is JSON-serialized)
+        // and freezes the UI. Buffer server output and flush at most once
+        // per 16 ms (one frame). Each flush forwards at most the NEWEST
+        // ~256 KiB (see flush_output) — xterm's scrollback is 2000 lines,
+        // so anything older would scroll straight out of the buffer
+        // anyway; shedding it keeps even a multi-MB/s burst harmless.
+        // After an idle period the interval has a tick "banked", so a
+        // lone keystroke echo still flushes immediately — no felt latency.
         let mut out_buf: Vec<u8> = Vec::new();
         let mut flush =
             tokio::time::interval(std::time::Duration::from_millis(16));
@@ -126,9 +128,6 @@ pub async fn open(
                     match msg {
                         Some(ChannelMsg::Data { data }) => {
                             out_buf.extend_from_slice(&data);
-                            if out_buf.len() >= FLUSH_MAX {
-                                let _ = app.emit(&event_name, std::mem::take(&mut out_buf));
-                            }
                             // Every output chunk pushes the quiet-period
                             // deadline back; the auto-cd fires only once
                             // the stream settles (see init_deadline note).
@@ -142,9 +141,6 @@ pub async fn open(
                         Some(ChannelMsg::ExtendedData { data, ext: _ }) => {
                             // stderr over an interactive shell — merge.
                             out_buf.extend_from_slice(&data);
-                            if out_buf.len() >= FLUSH_MAX {
-                                let _ = app.emit(&event_name, std::mem::take(&mut out_buf));
-                            }
                             if pending_init.is_some() {
                                 init_deadline = Some(
                                     tokio::time::Instant::now()
@@ -155,9 +151,7 @@ pub async fn open(
                         Some(ChannelMsg::ExitStatus { exit_status }) => {
                             // Drain buffered output first so the frontend
                             // sees all data before the exit notification.
-                            if !out_buf.is_empty() {
-                                let _ = app.emit(&event_name, std::mem::take(&mut out_buf));
-                            }
+                            flush_output(&app, &event_name, &mut out_buf);
                             let _ = app.emit(&exit_event, exit_status);
                         }
                         Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
@@ -170,7 +164,7 @@ pub async fn open(
                 // disabled while the buffer is empty so an idle terminal
                 // never wakes the task.
                 _ = flush.tick(), if !out_buf.is_empty() => {
-                    let _ = app.emit(&event_name, std::mem::take(&mut out_buf));
+                    flush_output(&app, &event_name, &mut out_buf);
                 }
                 // Server went quiet after login output → inject the
                 // auto-cd now, at a settled prompt.
@@ -185,9 +179,7 @@ pub async fn open(
         }
 
         // Clean up the slot in the session. Drain any tail output first.
-        if !out_buf.is_empty() {
-            let _ = app.emit(&event_name, std::mem::take(&mut out_buf));
-        }
+        flush_output(&app, &event_name, &mut out_buf);
         session_ref.terminals.remove(&term_id);
         let _ = app.emit(&exit_event, -1i32);
     });
@@ -201,6 +193,41 @@ pub async fn open(
     );
 
     Ok(terminal_id)
+}
+
+/// Emit buffered terminal output to the frontend, shedding all but the
+/// newest `KEEP_MAX` bytes when a flood outpaces the display.
+///
+/// Rationale: xterm keeps 2000 lines of scrollback (~250 KiB of text) —
+/// bytes older than that scroll straight out of its buffer, so pushing
+/// them across the IPC and through the parser is pure waste, and during a
+/// `docker compose logs -f` burst it is exactly that waste that used to
+/// freeze the webview. The cut lands on a newline boundary when one is
+/// near so escape sequences / UTF-8 rarely split, and a dim notice line
+/// tells the user how much was skipped.
+fn flush_output(app: &tauri::AppHandle, event: &str, buf: &mut Vec<u8>) {
+    const KEEP_MAX: usize = 256 * 1024;
+    if buf.is_empty() {
+        return;
+    }
+    if buf.len() > KEEP_MAX {
+        let mut cut = buf.len() - KEEP_MAX;
+        // Prefer starting the kept tail at a line boundary.
+        if let Some(nl) = buf[cut..(cut + 4096).min(buf.len())]
+            .iter()
+            .position(|&b| b == b'\n')
+        {
+            cut += nl + 1;
+        }
+        let skipped_kib = cut / 1024;
+        let mut shed = format!(
+            "\r\n\x1b[90m[{skipped_kib} KiB skipped — output arriving faster than the display]\x1b[0m\r\n"
+        )
+        .into_bytes();
+        shed.extend_from_slice(&buf[cut..]);
+        *buf = shed;
+    }
+    let _ = app.emit(event, std::mem::take(buf));
 }
 
 pub fn write(session: &SshSession, terminal_id: &str, data: Vec<u8>) -> AppResult<()> {

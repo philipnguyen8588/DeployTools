@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useTheme } from "next-themes";
 
@@ -11,6 +12,7 @@ import { useServers } from "@/stores/servers";
 import { usePrefs } from "@/stores/prefs";
 import { buildBanner, indexAfterLastClear } from "@/lib/banner";
 import { AnsiHighlighter } from "@/lib/ansi-highlight";
+import { TERMINAL_THEMES } from "@/lib/terminal-themes";
 
 interface Props {
   sessionId: string;
@@ -104,6 +106,43 @@ const THEME_LIGHT = {
   brightWhite: "#D8E1E7",
 };
 
+type XtermTheme = typeof THEME_DARK;
+
+/**
+ * Resolve the xterm theme object from the user's choice. "auto" follows
+ * the app light/dark mode (Clear Light / Clear Dark); any other value is
+ * a named entry from TERMINAL_THEMES (used for both app modes). Falls
+ * back to the app-mode default if the named theme is missing.
+ */
+function resolveTheme(choice: string, appDark: boolean): XtermTheme {
+  const fallback = appDark ? THEME_DARK : THEME_LIGHT;
+  if (choice === "auto") return fallback;
+  const t = TERMINAL_THEMES.find((x) => x.name === choice);
+  if (!t) return fallback;
+  return {
+    background: t.background,
+    foreground: t.foreground,
+    cursor: t.cursor,
+    selectionBackground: t.selectionBackground ?? "#7F7F7F55",
+    black: t.black,
+    red: t.red,
+    green: t.green,
+    yellow: t.yellow,
+    blue: t.blue,
+    magenta: t.magenta,
+    cyan: t.cyan,
+    white: t.white,
+    brightBlack: t.brightBlack,
+    brightRed: t.brightRed,
+    brightGreen: t.brightGreen,
+    brightYellow: t.brightYellow,
+    brightBlue: t.brightBlue,
+    brightMagenta: t.brightMagenta,
+    brightCyan: t.brightCyan,
+    brightWhite: t.brightWhite,
+  };
+}
+
 export function Terminal({
   sessionId,
   serverId,
@@ -128,6 +167,10 @@ export function Terminal({
   useEffect(() => {
     highlightOnRef.current = highlightEnabled;
   }, [highlightEnabled]);
+
+  // Selected terminal color theme — live-applied so picking a theme in the
+  // dialog recolors every open terminal at once.
+  const terminalTheme = usePrefs((s) => s.terminalTheme);
 
   // Keep the latest server-output callback in a ref so the listen
   // callback (set up once at mount) always calls the most recent
@@ -185,13 +228,15 @@ export function Terminal({
     return () => window.removeEventListener("keydown", handler);
   }, [isActive]);
 
-  // (Re)theme on theme change.
+  // (Re)theme when the app light/dark mode OR the chosen terminal theme
+  // changes. Also repaint the container bg var so padding matches.
   useEffect(() => {
-    if (termRef.current) {
-      termRef.current.options.theme =
-        resolvedTheme === "dark" ? THEME_DARK : THEME_LIGHT;
+    const theme = resolveTheme(terminalTheme, resolvedTheme === "dark");
+    if (termRef.current) termRef.current.options.theme = theme;
+    if (containerRef.current) {
+      containerRef.current.style.setProperty("--xterm-bg", theme.background);
     }
-  }, [resolvedTheme]);
+  }, [resolvedTheme, terminalTheme]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -206,7 +251,7 @@ export function Terminal({
       // closest system font to SF Mono), then Consolas.
       fontFamily:
         '"SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace',
-      fontSize: 13,
+      fontSize: 14,
       // Windows renders these faces thinner than macOS does — nudge the
       // weight up so text reads as solid, not gray (Cascadia Mono is a
       // variable font, so 450 is honored, not synthesized).
@@ -232,12 +277,26 @@ export function Terminal({
       // Disable xterm's built-in right-click selection so we can use
       // right-click for paste (Windows convention).
       rightClickSelectsWord: false,
-      theme: resolvedTheme === "dark" ? THEME_DARK : THEME_LIGHT,
+      theme: resolveTheme(
+        usePrefs.getState().terminalTheme,
+        resolvedTheme === "dark",
+      ),
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(containerRef.current);
+    // WebGL renderer — 10-50x the throughput of the default DOM renderer,
+    // which is what buckles first under a `docker compose logs -f` flood.
+    // Must load after open(); falls back to DOM silently if the context
+    // can't be created (remote desktop, GPU blocklist, …).
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      term.loadAddon(webgl);
+    } catch {
+      /* DOM renderer fallback */
+    }
     termRef.current = term;
 
     // --- Copy on select, paste on right-click or Ctrl+Shift+V ---

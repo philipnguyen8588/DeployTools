@@ -79,9 +79,21 @@
   * {
     @apply border-border;
   }
+  /* Base font size drives every rem-based Tailwind text class (text-xs,
+     text-sm, …). Bumped from the 16px default to 17px so the whole UI
+     reads a notch larger without touching each component. */
+  html {
+    font-size: 17px;
+  }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
+    /* Crisper, slightly heavier glyph edges — the UI font renders thin on
+       Windows otherwise. antialiased on mac, grayscale is the analogous
+       hint the webview honors on Windows. */
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    letter-spacing: 0.01em;
   }
   html,
   body,

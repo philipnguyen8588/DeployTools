@@ -14,6 +14,7 @@ import {
   Search,
   History as HistoryIcon,
   Highlighter,
+  Palette,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -37,6 +38,11 @@ const SnippetInsertDialog = lazy(() =>
 const HistoryInsertDialog = lazy(() =>
   import("./HistoryInsertDialog").then((m) => ({
     default: m.HistoryInsertDialog,
+  })),
+);
+const TerminalThemeDialog = lazy(() =>
+  import("./TerminalThemeDialog").then((m) => ({
+    default: m.TerminalThemeDialog,
   })),
 );
 
@@ -125,6 +131,7 @@ export function BottomPanel({
   const [terminalIds, setTerminalIds] = useState<Record<string, string>>({});
   const [snippetOpen, setSnippetOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [themeOpen, setThemeOpen] = useState(false);
   /** Counter bumped whenever we want the active terminal to re-grab
    *  keyboard focus — e.g. after a Snippets/History modal closes. */
   const [focusBump, setFocusBump] = useState(0);
@@ -390,6 +397,15 @@ export function BottomPanel({
           <div className="flex shrink-0 items-center gap-1 border-l px-1 py-1">
             <Button
               size="xs"
+              variant="ghost"
+              onClick={() => setThemeOpen(true)}
+              title="Pick a terminal color theme (macOS Terminal.app themes)"
+            >
+              <Palette className="mr-1 h-3 w-3" />
+              Theme
+            </Button>
+            <Button
+              size="xs"
               variant={highlightEnabled ? "default" : "ghost"}
               onClick={() => {
                 toggleHighlight();
@@ -599,6 +615,16 @@ export function BottomPanel({
             onInsert={(cmd) => void insertSnippetIntoActiveTerminal(cmd)}
             onClose={() => {
               setHistoryOpen(false);
+              refocusTerminal();
+            }}
+          />
+        </Suspense>
+      )}
+      {themeOpen && (
+        <Suspense fallback={null}>
+          <TerminalThemeDialog
+            onClose={() => {
+              setThemeOpen(false);
               refocusTerminal();
             }}
           />

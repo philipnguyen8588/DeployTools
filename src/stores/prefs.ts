@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { TerminalThemeEntry } from "@/lib/terminal-themes";
 
 /**
  * Lightweight, frontend-only preferences persisted to localStorage.
@@ -18,6 +19,14 @@ export const DEFAULT_HIGHLIGHT_KEYWORDS = [
   "warn",
 ];
 
+/**
+ * How the terminal picks its colors.
+ *  - "auto": follow the app light/dark theme (Clear Light / Clear Dark).
+ *  - otherwise: the `name` of a TERMINAL_THEMES entry, used for both
+ *    light and dark app modes.
+ */
+export type TerminalThemeChoice = string; // "auto" | <theme name>
+
 interface PrefsState {
   /** Show the MobaXterm-style session banner when a terminal opens. */
   bannerEnabled: boolean;
@@ -25,12 +34,17 @@ interface PrefsState {
   highlightEnabled: boolean;
   /** Keywords colored in output (case-insensitive, word-boundary). */
   highlightKeywords: string[];
+  /** Selected terminal color theme, or "auto" to follow the app theme. */
+  terminalTheme: TerminalThemeChoice;
 
   setBannerEnabled: (v: boolean) => void;
   setHighlightEnabled: (v: boolean) => void;
   toggleHighlight: () => void;
   setKeywords: (list: string[]) => void;
+  setTerminalTheme: (name: TerminalThemeChoice) => void;
 }
+
+export type { TerminalThemeEntry };
 
 export const usePrefs = create<PrefsState>()(
   persist(
@@ -38,12 +52,14 @@ export const usePrefs = create<PrefsState>()(
       bannerEnabled: true,
       highlightEnabled: true,
       highlightKeywords: DEFAULT_HIGHLIGHT_KEYWORDS,
+      terminalTheme: "auto",
 
       setBannerEnabled: (v) => set({ bannerEnabled: v }),
       setHighlightEnabled: (v) => set({ highlightEnabled: v }),
       toggleHighlight: () =>
         set((s) => ({ highlightEnabled: !s.highlightEnabled })),
       setKeywords: (list) => set({ highlightKeywords: list }),
+      setTerminalTheme: (name) => set({ terminalTheme: name }),
     }),
     { name: "deploytools-prefs" },
   ),
