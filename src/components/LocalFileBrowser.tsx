@@ -55,8 +55,9 @@ export function LocalFileBrowser({
   const [selection, setSelection] = useState<LocalEntry | null>(null);
   /** Multi-selection for batch upload — keyed by relative_path. */
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  /** Whether excluded (dimmed) entries are shown in the list. */
-  const [showExcluded, setShowExcluded] = useState(true);
+  /** Whether excluded (dimmed) entries are shown in the list.
+   *  Hidden by default — the eye toggle in the toolbar reveals them. */
+  const [showExcluded, setShowExcluded] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [compareFor, setCompareFor] = useState<string | null>(null);
   const [compareFolderFor, setCompareFolderFor] = useState<string | null>(null);

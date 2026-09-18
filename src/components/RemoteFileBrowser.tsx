@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Folder,
   FileText,
@@ -11,12 +11,16 @@ import {
   GitCompare,
   Edit3,
   Copy,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 import * as api from "@/lib/api";
 import type { RemoteEntry } from "@/lib/types";
+import { makeExcludeMatcher } from "@/lib/excludes";
+import { useProjects } from "@/stores/projects";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { cn, formatBytes, formatMtime } from "@/lib/utils";
@@ -54,6 +58,10 @@ export function RemoteFileBrowser({
   const [selection, setSelection] = useState<RemoteEntry | null>(null);
   /** Multi-selection for batch download — keyed by full_path. */
   const [checked, setChecked] = useState<Set<string>>(new Set());
+  /** Whether entries matching the project's exclude patterns are shown.
+   *  Hidden by default — same as the local browser's eye toggle. */
+  const [showExcluded, setShowExcluded] = useState(false);
+  const { projects } = useProjects();
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [compareFor, setCompareFor] = useState<string | null>(null);
   const [compareFolderFor, setCompareFolderFor] = useState<string | null>(null);
@@ -89,11 +97,34 @@ export function RemoteFileBrowser({
     });
   }
 
+  // Exclude matching — mirrors the backend's globset semantics using the
+  // mapped project's patterns (+ the always-on baseline). Entries matching
+  // a pattern are hidden unless the eye toggle is on.
+  const isExcluded = useMemo(() => {
+    const project = projectId
+      ? projects.find((p) => p.id === projectId)
+      : undefined;
+    return makeExcludeMatcher(project?.excludes);
+  }, [projectId, projects]);
+
+  const withFlags = useMemo(
+    () =>
+      entries.map((e) => ({
+        ...e,
+        excluded: isExcluded(e.name, relativeToProject(e.full_path)),
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [entries, isExcluded, projectRemoteBase],
+  );
+
+  // Entries actually rendered — optionally hiding excluded ones.
+  const shown = showExcluded ? withFlags : withFlags.filter((e) => !e.excluded);
+
   function toggleAll() {
     setChecked((prev) =>
-      prev.size === entries.length
+      prev.size === shown.length
         ? new Set()
-        : new Set(entries.map((e) => e.full_path)),
+        : new Set(shown.map((e) => e.full_path)),
     );
   }
 
@@ -360,6 +391,18 @@ export function RemoteFileBrowser({
         <Button size="icon-sm" variant="ghost" onClick={refresh} title="Refresh">
           <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          onClick={() => setShowExcluded((v) => !v)}
+          title={showExcluded ? "Hide excluded files" : "Show excluded files"}
+        >
+          {showExcluded ? (
+            <Eye className="h-3.5 w-3.5" />
+          ) : (
+            <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
+          )}
+        </Button>
         <Input
           value={path}
           onChange={(e) => onPathChange(e.target.value)}
@@ -414,11 +457,11 @@ export function RemoteFileBrowser({
                 <input
                   type="checkbox"
                   className="cursor-pointer align-middle accent-primary"
-                  checked={entries.length > 0 && checked.size === entries.length}
+                  checked={shown.length > 0 && checked.size === shown.length}
                   ref={(el) => {
                     if (el)
                       el.indeterminate =
-                        checked.size > 0 && checked.size < entries.length;
+                        checked.size > 0 && checked.size < shown.length;
                   }}
                   onChange={toggleAll}
                   title="Select all"
@@ -431,7 +474,7 @@ export function RemoteFileBrowser({
             </tr>
           </thead>
           <tbody>
-            {entries.map((e) => (
+            {shown.map((e) => (
               <tr
                 key={e.full_path}
                 onClick={() => setSelection(e)}
@@ -447,7 +490,9 @@ export function RemoteFileBrowser({
                 className={cn(
                   "cursor-pointer border-b hover:bg-accent",
                   selection?.full_path === e.full_path && "bg-primary/10",
+                  e.excluded && "opacity-50",
                 )}
+                title={e.excluded ? "Excluded by pattern" : undefined}
               >
                 <td
                   className="px-2 py-1 text-center"
@@ -468,6 +513,11 @@ export function RemoteFileBrowser({
                       <FileText className="h-3.5 w-3.5 text-muted-foreground" />
                     )}
                     {e.name}
+                    {e.excluded && (
+                      <span className="ml-1 rounded bg-muted px-1 py-0.5 font-mono text-[10px] uppercase tracking-wide">
+                        excl
+                      </span>
+                    )}
                   </span>
                 </td>
                 <td className="px-3 py-1 text-right font-mono tabular-nums">
@@ -483,9 +533,11 @@ export function RemoteFileBrowser({
             ))}
           </tbody>
         </table>
-        {entries.length === 0 && !loading && (
+        {shown.length === 0 && !loading && (
           <div className="p-8 text-center text-xs text-muted-foreground">
-            Empty directory
+            {entries.length === 0
+              ? "Empty directory"
+              : "All entries here are excluded — toggle the eye icon to show them."}
           </div>
         )}
       </div>
