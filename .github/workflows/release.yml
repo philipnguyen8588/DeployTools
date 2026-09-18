@@ -96,20 +96,28 @@ jobs:
       - name: Build the app
         run: npm run tauri -- build ${{ matrix.args }}
 
-      # Upload only the DeployTools* bundles (Tauri v2 also emits Linux
-      # bundles under the crate name deploy-tools_*, which we skip). Each
-      # platform's asset names are unique, so parallel uploads don't clash.
+      # Upload only the DeployTools* bundles with the GitHub CLI (reliable
+      # + fully under our control). Tauri v2 also emits Linux bundles under
+      # the crate name deploy-tools_*, which the globs skip. `--clobber`
+      # overwrites an asset if it already exists on the release.
       - name: Upload assets
-        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          fail_on_unmatched_files: false
-          files: |
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          files=(
             src-tauri/target/release/bundle/nsis/DeployTools_*-setup.exe
             src-tauri/target/release/bundle/msi/DeployTools_*.msi
             src-tauri/target/release/bundle/appimage/DeployTools_*.AppImage
             src-tauri/target/release/bundle/deb/DeployTools_*.deb
             src-tauri/target/release/bundle/rpm/DeployTools-*.rpm
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/DeployTools_*.dmg
+          )
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::No DeployTools* artifacts found"; find src-tauri/target -name 'bundle' -type d -exec ls -R {} +; exit 1
+          fi
+          printf 'Uploading:\n'; printf '  %s\n' "${files[@]}"
+          gh release upload "${{ github.ref_name }}" "${files[@]}" \
+            --repo "${{ github.repository }}" --clobber
