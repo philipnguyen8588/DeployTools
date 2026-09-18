@@ -3,7 +3,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Plug } from "lucide-react";
 import { toast } from "sonner";
 
-import type { AuthMethod, Server, UUID } from "@/lib/types";
+import type { AuthMethod, JumpHost, Server, UUID } from "@/lib/types";
 import * as api from "@/lib/api";
 import {
   Dialog,
@@ -49,6 +49,14 @@ const DEFAULT_PORT: Record<"ssh" | "ftp" | "ftps", number> = {
   ftps: 21,
 };
 
+const emptyJump: JumpHost = {
+  host: "",
+  port: 22,
+  user: "",
+  auth: { kind: "password", password: "" },
+  host_key_fingerprint: null,
+};
+
 export function ServerDialog({
   serverId,
   initialServer,
@@ -64,6 +72,9 @@ export function ServerDialog({
   );
   const [authKind, setAuthKind] = useState<"password" | "private_key">(
     initialServer?.auth.kind ?? "password",
+  );
+  const [jumpAuthKind, setJumpAuthKind] = useState<"password" | "private_key">(
+    initialServer?.jump_host?.auth.kind ?? "password",
   );
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -82,6 +93,7 @@ export function ServerDialog({
         if (cancelled) return;
         setServer(full);
         setAuthKind(full.auth.kind);
+        setJumpAuthKind(full.jump_host?.auth.kind ?? "password");
       } catch (e) {
         toast.error(`Load server failed: ${e}`);
       } finally {
@@ -110,6 +122,30 @@ export function ServerDialog({
         ...s,
         auth: { kind: "private_key", key_path: selected, passphrase: null },
       }));
+    }
+  }
+
+  /** Merge a patch into the (possibly-absent) jump host config. */
+  function updateJump(patch: Partial<JumpHost>) {
+    setServer((s) => ({
+      ...s,
+      jump_host: { ...(s.jump_host ?? emptyJump), ...patch },
+    }));
+  }
+
+  function toggleJump(on: boolean) {
+    setServer((s) => ({ ...s, jump_host: on ? s.jump_host ?? emptyJump : null }));
+  }
+
+  async function pickJumpKey() {
+    const selected = await openDialog({
+      multiple: false,
+      title: "Select jump host private key",
+    });
+    if (typeof selected === "string") {
+      updateJump({
+        auth: { kind: "private_key", key_path: selected, passphrase: null },
+      });
     }
   }
 
@@ -233,6 +269,8 @@ export function ServerDialog({
                           p !== "ssh" && server.auth.kind === "private_key"
                             ? { kind: "password", password: "" }
                             : server.auth,
+                        // Jump host is SSH-only.
+                        jump_host: p === "ssh" ? server.jump_host : null,
                       });
                       if (p !== "ssh") setAuthKind("password");
                     }}
@@ -414,6 +452,169 @@ export function ServerDialog({
                 />
               </div>
             </>
+          )}
+
+          {server.protocol === "ssh" && (
+            <div className="space-y-2 rounded-md border p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <Label>Jump host (bastion)</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Tunnel this SSH connection through an intermediate server
+                    (ProxyJump).
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={server.jump_host ? "default" : "outline"}
+                  onClick={() => toggleJump(!server.jump_host)}
+                >
+                  {server.jump_host ? "On" : "Off"}
+                </Button>
+              </div>
+
+              {server.jump_host && (
+                <div className="space-y-2 border-t pt-2">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="col-span-2 space-y-1">
+                      <Label>Jump host</Label>
+                      <Input
+                        placeholder="bastion.example.com"
+                        value={server.jump_host.host}
+                        onChange={(e) => updateJump({ host: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Port</Label>
+                      <Input
+                        type="number"
+                        value={server.jump_host.port}
+                        onChange={(e) =>
+                          updateJump({ port: Number(e.target.value) })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label>User</Label>
+                    <Input
+                      placeholder="jump-user"
+                      value={server.jump_host.user}
+                      onChange={(e) => updateJump({ user: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={jumpAuthKind === "password" ? "default" : "outline"}
+                      onClick={() => {
+                        setJumpAuthKind("password");
+                        updateJump({ auth: { kind: "password", password: "" } });
+                      }}
+                    >
+                      Password
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={
+                        jumpAuthKind === "private_key" ? "default" : "outline"
+                      }
+                      onClick={() => {
+                        setJumpAuthKind("private_key");
+                        updateJump({
+                          auth: {
+                            kind: "private_key",
+                            key_path: "",
+                            passphrase: null,
+                          },
+                        });
+                      }}
+                    >
+                      Private key
+                    </Button>
+                  </div>
+
+                  {jumpAuthKind === "password" ? (
+                    <Input
+                      type="password"
+                      placeholder="Jump host password"
+                      value={
+                        server.jump_host.auth.kind === "password"
+                          ? server.jump_host.auth.password
+                          : ""
+                      }
+                      onChange={(e) =>
+                        updateJump({
+                          auth: { kind: "password", password: e.target.value },
+                        })
+                      }
+                    />
+                  ) : (
+                    <>
+                      <div className="flex gap-2">
+                        <textarea
+                          rows={1}
+                          placeholder="~/.ssh/id_ed25519 or paste PEM (-----BEGIN…)"
+                          value={
+                            server.jump_host.auth.kind === "private_key"
+                              ? server.jump_host.auth.key_path
+                              : ""
+                          }
+                          onChange={(e) =>
+                            updateJump({
+                              auth: {
+                                kind: "private_key",
+                                key_path: e.target.value,
+                                passphrase:
+                                  server.jump_host?.auth.kind === "private_key"
+                                    ? server.jump_host.auth.passphrase
+                                    : null,
+                              },
+                            })
+                          }
+                          spellCheck={false}
+                          className="flex w-full rounded-md border border-input bg-background px-3 py-1.5 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={pickJumpKey}
+                          title="Pick a key file…"
+                        >
+                          <FolderOpen className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <Input
+                        type="password"
+                        placeholder="Key passphrase (optional)"
+                        value={
+                          server.jump_host.auth.kind === "private_key"
+                            ? server.jump_host.auth.passphrase ?? ""
+                            : ""
+                        }
+                        onChange={(e) =>
+                          updateJump({
+                            auth: {
+                              kind: "private_key",
+                              key_path:
+                                server.jump_host?.auth.kind === "private_key"
+                                  ? server.jump_host.auth.key_path
+                                  : "",
+                              passphrase: e.target.value || null,
+                            },
+                          })
+                        }
+                      />
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           <DialogFooter className="pt-2">

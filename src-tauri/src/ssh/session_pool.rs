@@ -19,7 +19,7 @@ use uuid::Uuid;
 use crate::errors::{AppError, AppResult};
 use crate::models::Project;
 use crate::ssh::capabilities::SessionCapabilities;
-use crate::ssh::client::ClientHandler;
+use crate::ssh::client::{ClientHandler, SshClient};
 
 pub type SessionId = String;
 pub type TerminalId = String;
@@ -36,6 +36,12 @@ pub struct SshSession {
     pub project: Option<Project>,
     pub handle: Arc<Mutex<Handle<ClientHandler>>>,
     pub fingerprint: String,
+    /// Keep-alive for the jump-host chain, if this session was opened
+    /// through a bastion. The target's transport (`handle`) is a channel
+    /// on the jump host's connection, so it must outlive nothing here but
+    /// must not be dropped early — holding it keeps the tunnel open.
+    /// `None` for direct connections. Never read; presence is the point.
+    pub _jump: Option<Box<SshClient>>,
     pub terminals: DashMap<TerminalId, TerminalSlot>,
     pub opened_at: SystemTime,
     pub app: AppHandle,

@@ -76,6 +76,23 @@ impl Protocol {
     }
 }
 
+/// Inline jump host (bastion) config. When set on a `Server`, the SSH
+/// connection is tunneled: we connect to this host first, then open a
+/// `direct-tcpip` channel to the real target through it (OpenSSH
+/// ProxyJump). Self-contained credentials — not a reference to another
+/// saved server. SSH only. Single hop (no nested jump host).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JumpHost {
+    pub host: String,
+    #[serde(default = "default_port")]
+    pub port: u16,
+    pub user: String,
+    pub auth: AuthMethod,
+    /// Pinned SHA-256 host-key fingerprint of the jump host itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_key_fingerprint: Option<String>,
+}
+
 /// A remote server profile — SSH, FTP, or FTPS.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Server {
@@ -96,6 +113,10 @@ pub struct Server {
     /// a warning (MITM protection). Only applies to SSH.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_key_fingerprint: Option<String>,
+
+    /// Optional jump host (bastion) to tunnel this SSH connection through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_host: Option<JumpHost>,
 
     /// Optional group membership. `None` means the server sits in the
     /// virtual "Ungrouped" bucket at the top of the sidebar — the
@@ -295,6 +316,8 @@ pub struct ServerSummary {
     pub auth_kind: &'static str,
     pub protocol: Protocol,
     pub has_fingerprint: bool,
+    /// True when this server connects through a jump host (for a badge).
+    pub has_jump: bool,
     /// Group membership — `None` for the virtual "Ungrouped" bucket.
     pub group_id: Option<Uuid>,
     pub order: i32,
@@ -314,6 +337,7 @@ impl From<&Server> for ServerSummary {
             },
             protocol: s.protocol,
             has_fingerprint: s.host_key_fingerprint.is_some(),
+            has_jump: s.jump_host.is_some(),
             group_id: s.group_id,
             order: s.order,
         }

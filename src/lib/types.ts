@@ -12,6 +12,16 @@ export type AuthMethod =
 
 export type Protocol = "ssh" | "ftp" | "ftps";
 
+/** Inline jump host (bastion) — the SSH connection tunnels through this
+ *  host first (OpenSSH ProxyJump). Mirrors Rust `JumpHost`. */
+export interface JumpHost {
+  host: string;
+  port: number;
+  user: string;
+  auth: AuthMethod;
+  host_key_fingerprint?: string | null;
+}
+
 export interface Server {
   id: UUID;
   name: string;
@@ -21,6 +31,8 @@ export interface Server {
   auth: AuthMethod;
   protocol: Protocol;
   host_key_fingerprint?: string | null;
+  /** Optional jump host to tunnel this SSH connection through. */
+  jump_host?: JumpHost | null;
   /** Group membership — `null` for the virtual "Ungrouped" bucket. */
   group_id?: UUID | null;
   /** Position within its group (ascending). */
@@ -36,6 +48,8 @@ export interface ServerSummary {
   auth_kind: "password" | "key";
   protocol: Protocol;
   has_fingerprint: boolean;
+  /** True when this server connects through a jump host. */
+  has_jump: boolean;
   /** `null` = sidebar's virtual "Ungrouped" bucket. */
   group_id: UUID | null;
   order: number;

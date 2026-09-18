@@ -1325,6 +1325,7 @@ async fn open_ephemeral(
         project,
         handle: Arc::new(Mutex::new(client.handle)),
         fingerprint: fp,
+        _jump: client.jump,
         terminals: dashmap::DashMap::new(),
         opened_at: SystemTime::now(),
         app: state.app.clone(),

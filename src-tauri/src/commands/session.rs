@@ -38,12 +38,28 @@ pub async fn open_session(
         Protocol::Ssh => {
             let ssh = client::connect(&server).await?;
             let fp = ssh.fingerprint.clone();
-            if server.host_key_fingerprint.is_none() {
+            let jump_fp = ssh.jump.as_ref().map(|j| j.fingerprint.clone());
+
+            // Pin fingerprints observed on first connect — for the server
+            // and, if we tunneled, the jump host too.
+            let need_server_fp = server.host_key_fingerprint.is_none();
+            let need_jump_fp =
+                matches!(&server.jump_host, Some(j) if j.host_key_fingerprint.is_none());
+            if need_server_fp || need_jump_fp {
                 state
                     .vault
                     .write(|data| {
                         if let Some(s) = data.servers.iter_mut().find(|s| s.id == server_id) {
-                            s.host_key_fingerprint = Some(fp.clone());
+                            if need_server_fp {
+                                s.host_key_fingerprint = Some(fp.clone());
+                            }
+                            if need_jump_fp {
+                                if let (Some(jh), Some(jfp)) =
+                                    (s.jump_host.as_mut(), jump_fp.as_ref())
+                                {
+                                    jh.host_key_fingerprint = Some(jfp.clone());
+                                }
+                            }
                         }
                     })
                     .await?;
@@ -54,6 +70,7 @@ pub async fn open_session(
                 project,
                 handle: Arc::new(Mutex::new(ssh.handle)),
                 fingerprint: fp.clone(),
+                _jump: ssh.jump,
                 terminals: dashmap::DashMap::new(),
                 opened_at: SystemTime::now(),
                 app: state.app.clone(),
