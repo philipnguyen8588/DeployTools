@@ -572,57 +572,95 @@ pub async fn deploy_sync(
         Some(&sid),
     );
 
-    // Execute upload
+    // Execute upload — same batch machinery as deploy_files: ONE SFTP
+    // channel for all files, parent dirs mkdir'd once (deduped), writes
+    // pipelined. The old per-file `sftp::upload()` opened a fresh channel
+    // + mkdir chain for every file, which dominated wall-clock on many-
+    // small-file syncs.
     let cancel = CancelGuard::new(state.inner(), job_id.clone());
     let total = (to_upload.len() + to_delete.len()) as u32;
     let mut uploaded = 0u32;
-    let mut cancelled = false;
-    for rel in &to_upload {
-        if cancel.cancelled() {
-            cancelled = true;
-            break;
+    let mut upload_err: Option<crate::errors::AppError> = None;
+    if !to_upload.is_empty() {
+        let pairs: Vec<(std::path::PathBuf, String)> = to_upload
+            .iter()
+            .map(|rel| (canon_root.join(rel), format!("{}/{}", remote_root, rel)))
+            .collect();
+        let app = state.app.clone();
+        let jid = job_id.clone();
+        match crate::ssh::sftp::upload_batch(
+            &session,
+            &pairs,
+            |n, _remote| {
+                // upload_batch walks `pairs` in slice order and reports only
+                // after a file lands — so n-1 indexes straight into to_upload.
+                let rel = &to_upload[(n - 1) as usize];
+                // Record the content hash now that the file is on the server.
+                if let Some(h) = upload_hash.get(rel) {
+                    new_manifest.insert(rel.clone(), h.clone());
+                }
+                emit_progress(&app, &jid, n, total, rel);
+            },
+            || cancel.cancelled(),
+        )
+        .await
+        {
+            Ok(n) => uploaded = n,
+            Err(e) => {
+                crate::ssh::activity::error(
+                    &state.app,
+                    "sync",
+                    format!("✗ upload: {e}"),
+                    Some(&sid),
+                );
+                upload_err = Some(e);
+            }
         }
-        let local_full = canon_root.join(rel);
-        let remote_full = format!("{}/{}", remote_root, rel);
-        if let Err(e) = crate::ssh::sftp::upload(&session, &local_full, &remote_full).await {
-            crate::ssh::activity::error(
-                &state.app,
-                "sync",
-                format!("✗ upload {remote_full}: {e}"),
-                Some(&sid),
-            );
-            return Err(e);
-        }
-        uploaded += 1;
-        // Record the content hash now that the file is safely on the server.
-        if let Some(h) = upload_hash.get(rel) {
-            new_manifest.insert(rel.clone(), h.clone());
-        }
-        emit_progress(&state.app, &job_id, uploaded, total, rel);
     }
 
     // Persist the manifest (skipped/seeded + successfully uploaded files).
+    // Written even when an upload failed mid-batch, so the files that DID
+    // land aren't re-uploaded next sync (the failed file was never
+    // inserted — its callback didn't run).
     let _ = crate::syncstate::write(&state.app, project.id, &new_manifest);
+    if let Some(e) = upload_err {
+        return Err(e);
+    }
+    let mut cancelled = cancel.cancelled();
 
-    // Execute delete
+    // Execute delete — one SFTP channel for the whole pass; per-item
+    // failures warn and continue, exactly like the old loop.
     let mut deleted = 0u32;
-    for (rel, is_dir) in &to_delete {
-        if cancelled || cancel.cancelled() {
-            cancelled = true;
-            break;
-        }
-        let remote_full = format!("{}/{}", remote_root, rel);
-        if let Err(e) = crate::ssh::sftp::remove(&session, &remote_full, *is_dir).await {
-            crate::ssh::activity::warn(
-                &state.app,
-                "sync",
-                format!("could not delete {remote_full}: {e}"),
-                Some(&sid),
-            );
-        } else {
-            deleted += 1;
-            emit_progress(&state.app, &job_id, uploaded + deleted, total, rel);
-        }
+    if delete_extraneous && !to_delete.is_empty() && !cancelled {
+        let items: Vec<(String, bool)> = to_delete
+            .iter()
+            .map(|(rel, is_dir)| (format!("{}/{}", remote_root, rel), *is_dir))
+            .collect();
+        let app = state.app.clone();
+        let jid = job_id.clone();
+        let mut attempt = 0usize;
+        deleted = crate::ssh::sftp::remove_batch(
+            &session,
+            &items,
+            |n, _path, err| {
+                // remove_batch visits items in order; track our own attempt
+                // counter (n only counts successes) to recover `rel`.
+                let rel = &to_delete[attempt].0;
+                attempt += 1;
+                match err {
+                    None => emit_progress(&app, &jid, uploaded + n, total, rel),
+                    Some(msg) => crate::ssh::activity::warn(
+                        &app,
+                        "sync",
+                        format!("could not delete {}/{}: {msg}", remote_root, rel),
+                        Some(&sid),
+                    ),
+                }
+            },
+            || cancel.cancelled(),
+        )
+        .await?;
+        cancelled = cancel.cancelled();
     }
 
     if cancelled {

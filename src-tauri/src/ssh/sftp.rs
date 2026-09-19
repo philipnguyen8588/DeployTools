@@ -187,6 +187,53 @@ async fn remove_dir_recursive(sftp: &SftpSession, path: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Remove many remote paths over a SINGLE SFTP channel — the batch
+/// counterpart of `remove()`, used by the sync delete phase. Items are
+/// `(full_path, is_dir)` processed in slice order (the caller sorts
+/// deep-first), trusting the caller's `is_dir` instead of a per-path
+/// `stat` round-trip. Per-item failures are reported through `on_item`
+/// with an error message and do NOT abort the batch (sync's
+/// warn-and-continue semantics). Returns the number successfully removed.
+pub async fn remove_batch(
+    session: &SshSession,
+    items: &[(String, bool)],
+    mut on_item: impl FnMut(u32, &str, Option<&str>),
+    should_cancel: impl Fn() -> bool,
+) -> AppResult<u32> {
+    let sftp = open_sftp(session).await?;
+    let sftp = sftp.lock().await;
+    let mut deleted = 0u32;
+    for (path, is_dir) in items {
+        if should_cancel() {
+            break;
+        }
+        let res: AppResult<()> = if *is_dir {
+            remove_dir_recursive(&sftp, path).await
+        } else {
+            sftp.remove_file(path)
+                .await
+                .map_err(|e| AppError::Sftp(format!("remove {path}: {e}")))
+        };
+        match res {
+            Ok(()) => {
+                deleted += 1;
+                on_item(deleted, path, None);
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                on_item(deleted, path, Some(&msg));
+            }
+        }
+    }
+    activity::success(
+        &session.app,
+        "sftp",
+        format!("removed {deleted}/{} paths", items.len()),
+        Some(&session.id),
+    );
+    Ok(deleted)
+}
+
 pub async fn rename(session: &SshSession, from: &str, to: &str) -> AppResult<()> {
     let sftp = open_sftp(session).await?;
     let sftp = sftp.lock().await;
