@@ -139,8 +139,12 @@ pub struct Server {
 
 /// A saved tunnel definition (local port → remote host:port). The live
 /// tunnel is `commands::tunnel::TunnelInfo`; this is the persisted recipe.
+/// `name` is an optional human label (e.g. "MariaDB") — identity is still
+/// the local/host/port triple.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TunnelDef {
+    #[serde(default)]
+    pub name: String,
     pub local_port: u16,
     pub remote_host: String,
     pub remote_port: u16,

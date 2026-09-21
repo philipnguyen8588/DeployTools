@@ -141,27 +141,35 @@ pub async fn list_saved_tunnels(
         .await
 }
 
-/// Save a tunnel definition on a server (idempotent — a duplicate
-/// local/host/port triple is not added twice).
+/// Upsert a tunnel definition on a server, keyed by the local/host/port
+/// triple. If the triple already exists its `name` is updated; otherwise a
+/// new entry is added. Lets the user (re)label a saved or running tunnel.
 #[tauri::command]
 pub async fn save_tunnel(
     server_id: Uuid,
+    name: String,
     local_port: u16,
     remote_host: String,
     remote_port: u16,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let def = TunnelDef {
-        local_port,
-        remote_host,
-        remote_port,
-    };
     state
         .vault
         .write(|d| {
             if let Some(s) = d.servers.iter_mut().find(|s| s.id == server_id) {
-                if !s.tunnels.contains(&def) {
-                    s.tunnels.push(def.clone());
+                if let Some(t) = s.tunnels.iter_mut().find(|t| {
+                    t.local_port == local_port
+                        && t.remote_host == remote_host
+                        && t.remote_port == remote_port
+                }) {
+                    t.name = name;
+                } else {
+                    s.tunnels.push(TunnelDef {
+                        name,
+                        local_port,
+                        remote_host,
+                        remote_port,
+                    });
                     s.tunnels.sort_by_key(|t| t.local_port);
                 }
             }
@@ -179,16 +187,15 @@ pub async fn delete_saved_tunnel(
     remote_port: u16,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let def = TunnelDef {
-        local_port,
-        remote_host,
-        remote_port,
-    };
     state
         .vault
         .write(|d| {
             if let Some(s) = d.servers.iter_mut().find(|s| s.id == server_id) {
-                s.tunnels.retain(|t| t != &def);
+                s.tunnels.retain(|t| {
+                    !(t.local_port == local_port
+                        && t.remote_host == remote_host
+                        && t.remote_port == remote_port)
+                });
             }
         })
         .await?;

@@ -39,6 +39,7 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
   const [starting, setStarting] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
+  const [tunnelName, setTunnelName] = useState("");
   const [localPort, setLocalPort] = useState("");
   const [remoteHost, setRemoteHost] = useState("127.0.0.1");
   const [remotePort, setRemotePort] = useState("");
@@ -81,6 +82,7 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
       else
         map.set(k, {
           def: {
+            name: "",
             local_port: a.local_port,
             remote_host: a.remote_host,
             remote_port: a.remote_port,
@@ -108,8 +110,9 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
     try {
       await api.startTunnel(sessionId, lp, host, rp);
       // Remember it so it's one click next time.
-      if (serverId) await api.saveTunnel(serverId, lp, host, rp);
+      if (serverId) await api.saveTunnel(serverId, tunnelName.trim(), lp, host, rp);
       toast.success(`Tunnel up: 127.0.0.1:${lp} → ${host}:${rp}`);
+      setTunnelName("");
       setLocalPort("");
       setRemotePort("");
       await refresh();
@@ -171,6 +174,26 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
     try {
       await api.saveTunnel(
         serverId,
+        def.name,
+        def.local_port,
+        def.remote_host,
+        def.remote_port,
+      );
+      await refresh();
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
+  /** Set/change a tunnel's label. Upserts by the local/host/port triple,
+   *  so it also saves a running-but-unsaved tunnel. */
+  async function renameTunnel(def: TunnelDef, name: string) {
+    if (!serverId) return;
+    if (name.trim() === def.name) return;
+    try {
+      await api.saveTunnel(
+        serverId,
+        name.trim(),
         def.local_port,
         def.remote_host,
         def.remote_port,
@@ -185,6 +208,15 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
     <div className="flex h-full flex-col">
       {/* New-tunnel form */}
       <div className="flex flex-wrap items-end gap-2 border-b bg-muted/30 p-2">
+        <Field label="Name">
+          <Input
+            value={tunnelName}
+            onChange={(e) => setTunnelName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void start()}
+            placeholder="MariaDB"
+            className="h-6 w-28 text-xs"
+          />
+        </Field>
         <Field label="Local port">
           <Input
             value={localPort}
@@ -272,6 +304,7 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10 bg-card text-muted-foreground shadow-[0_1px_0_0_hsl(var(--border))]">
               <tr>
+                <th className="px-3 py-1.5 text-left font-medium">Name</th>
                 <th className="px-3 py-1.5 text-left font-medium">Local</th>
                 <th className="px-3 py-1.5 text-left font-medium">Forwards to</th>
                 <th className="w-24 px-3 py-1.5 text-right font-medium">Status</th>
@@ -288,6 +321,19 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
                 const busy = busyKey === k;
                 return (
                   <tr key={k} className="border-b hover:bg-accent">
+                    <td className="px-2 py-1">
+                      <input
+                        key={`${k}:${r.def.name}`}
+                        defaultValue={r.def.name}
+                        placeholder="name…"
+                        title="Click to name this tunnel (e.g. MariaDB)"
+                        onBlur={(e) => void renameTunnel(r.def, e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                        }}
+                        className="w-28 rounded bg-transparent px-1 py-0.5 text-xs outline-none hover:bg-background focus:bg-background focus:ring-1 focus:ring-ring"
+                      />
+                    </td>
                     <td className="px-3 py-1.5 font-mono">
                       <span
                         className={cn(

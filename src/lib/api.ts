@@ -459,6 +459,7 @@ export const listTunnels = (sessionId?: string) =>
 
 /** A saved tunnel recipe (persisted per server, re-startable across runs). */
 export interface TunnelDef {
+  name: string;
   local_port: number;
   remote_host: string;
   remote_port: number;
@@ -467,11 +468,18 @@ export const listSavedTunnels = (serverId: UUID) =>
   invoke<TunnelDef[]>("list_saved_tunnels", { serverId });
 export const saveTunnel = (
   serverId: UUID,
+  name: string,
   localPort: number,
   remoteHost: string,
   remotePort: number,
 ) =>
-  invoke<void>("save_tunnel", { serverId, localPort, remoteHost, remotePort });
+  invoke<void>("save_tunnel", {
+    serverId,
+    name,
+    localPort,
+    remoteHost,
+    remotePort,
+  });
 export const deleteSavedTunnel = (
   serverId: UUID,
   localPort: number,
