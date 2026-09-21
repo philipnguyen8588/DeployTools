@@ -405,8 +405,23 @@ export function Terminal({
       if (e.type !== "keydown") return true;
       // Let xterm's composition helper handle IME input untouched.
       if (e.isComposing || e.keyCode === 229) return true;
-      if (!e.ctrlKey || !e.shiftKey) return true;
       const k = e.key.toLowerCase();
+
+      // Find: Ctrl+F (Windows/Linux) or Cmd+F / Cmd+S (macOS). Opens the
+      // in-terminal search bar. We swallow it so it doesn't reach the shell
+      // (Ctrl+F would otherwise send ^F).
+      if (
+        (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && k === "f") ||
+        (e.metaKey && (k === "f" || k === "s"))
+      ) {
+        e.preventDefault();
+        setSearchOpen(true);
+        setTimeout(() => searchInputRef.current?.focus(), 0);
+        return false;
+      }
+
+      // The rest are Ctrl+Shift combos only.
+      if (!e.ctrlKey || !e.shiftKey) return true;
       if (k === "v") {
         e.preventDefault();
         void navigator.clipboard
@@ -424,13 +439,6 @@ export function Terminal({
           void navigator.clipboard.writeText(sel).catch(() => {});
           return false;
         }
-      }
-      if (k === "f") {
-        // Ctrl+Shift+F → open the in-terminal search bar.
-        e.preventDefault();
-        setSearchOpen(true);
-        setTimeout(() => searchInputRef.current?.focus(), 0);
-        return false;
       }
       return true;
     });
@@ -818,6 +826,22 @@ export function Terminal({
             resolvedTheme === "dark" ? THEME_DARK.background : THEME_LIGHT.background,
         }}
       />
+
+      {/* Corner magnifying-glass — click to open search (subtle until
+          hovered so it doesn't cover terminal output). */}
+      {!searchOpen && (
+        <button
+          onClick={() => {
+            setSearchOpen(true);
+            setTimeout(() => searchInputRef.current?.focus(), 0);
+          }}
+          title="Search (Ctrl+F / Cmd+F)"
+          aria-label="Search terminal"
+          className="absolute right-2 top-2 z-10 rounded-md border bg-popover/80 p-1 text-muted-foreground opacity-40 shadow-sm backdrop-blur transition-opacity hover:opacity-100"
+        >
+          <SearchIcon className="h-3.5 w-3.5" />
+        </button>
+      )}
 
       {searchOpen && (
         <div className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border bg-popover px-1.5 py-1 shadow-lg">
