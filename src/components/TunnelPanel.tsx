@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Cable, Plus, X, RefreshCcw, Loader2, Play, Trash2, Save } from "lucide-react";
+import {
+  Cable,
+  Plus,
+  RefreshCcw,
+  Loader2,
+  Play,
+  Trash2,
+  Save,
+  Square as StopIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import * as api from "@/lib/api";
@@ -38,6 +47,7 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
   const [loading, setLoading] = useState(false);
   const [starting, setStarting] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const [tunnelName, setTunnelName] = useState("");
   const [localPort, setLocalPort] = useState("");
@@ -154,6 +164,48 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
     }
   }
 
+  /** Start every saved tunnel that isn't already running. */
+  async function startAll() {
+    const toStart = rows.filter((r) => !r.active);
+    if (toStart.length === 0) return;
+    setBulkBusy(true);
+    try {
+      for (const r of toStart) {
+        try {
+          await api.startTunnel(
+            sessionId,
+            r.def.local_port,
+            r.def.remote_host,
+            r.def.remote_port,
+          );
+        } catch (e) {
+          toast.error(`${r.def.name || r.def.local_port}: ${e}`);
+        }
+      }
+      await refresh();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  /** Stop every running tunnel. */
+  async function stopAll() {
+    if (active.length === 0) return;
+    setBulkBusy(true);
+    try {
+      for (const t of active) {
+        try {
+          await api.stopTunnel(t.id);
+        } catch (e) {
+          toast.error(`${e}`);
+        }
+      }
+      await refresh();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   async function removeSaved(def: TunnelDef) {
     if (!serverId) return;
     try {
@@ -258,7 +310,33 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
           )}
           Start tunnel
         </Button>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-1">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 gap-1 px-2 text-xs"
+            disabled={bulkBusy || rows.every((r) => r.active)}
+            onClick={() => void startAll()}
+            title="Start every saved tunnel that isn't running"
+          >
+            {bulkBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Play className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+            )}
+            Start all
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 gap-1 px-2 text-xs"
+            disabled={bulkBusy || active.length === 0}
+            onClick={() => void stopAll()}
+            title="Stop every running tunnel"
+          >
+            <StopIcon className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />
+            Stop all
+          </Button>
           <Button
             size="icon-sm"
             variant="ghost"
@@ -304,10 +382,12 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10 bg-card text-muted-foreground shadow-[0_1px_0_0_hsl(var(--border))]">
               <tr>
+                <th className="w-[92px] px-3 py-1.5 text-left font-medium">
+                  Actions
+                </th>
                 <th className="px-3 py-1.5 text-left font-medium">Name</th>
                 <th className="px-3 py-1.5 text-left font-medium">Local</th>
                 <th className="px-3 py-1.5 text-left font-medium">Forwards to</th>
-                <th className="w-24 px-3 py-1.5 text-right font-medium">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -321,6 +401,62 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
                 const busy = busyKey === k;
                 return (
                   <tr key={k} className="border-b hover:bg-accent">
+                    <td className="whitespace-nowrap px-3 py-1">
+                      <div className="inline-flex items-center gap-1">
+                        {running ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busy}
+                            onClick={() => void stop(r.active!)}
+                            className="h-6 w-6 p-0"
+                            title="Stop tunnel"
+                          >
+                            {busy ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <StopIcon className="h-3 w-3 text-red-600 dark:text-red-400" />
+                            )}
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busy}
+                            onClick={() => void startSaved(r.def)}
+                            className="h-6 w-6 p-0"
+                            title="Start tunnel"
+                          >
+                            {busy ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Play className="h-3 w-3 text-green-600 dark:text-green-400" />
+                            )}
+                          </Button>
+                        )}
+                        {r.saved ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void removeSaved(r.def)}
+                            className="h-6 w-6 p-0"
+                            title="Remove saved tunnel"
+                          >
+                            <Trash2 className="h-3 w-3 text-muted-foreground" />
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void saveActive(r.def)}
+                            className="h-6 w-6 p-0"
+                            title="Save this tunnel for next time"
+                          >
+                            <Save className="h-3 w-3 text-muted-foreground" />
+                          </Button>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-2 py-1">
                       <input
                         key={`${k}:${r.def.name}`}
@@ -346,58 +482,6 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
                     </td>
                     <td className="px-3 py-1.5 font-mono text-muted-foreground">
                       {r.def.remote_host}:{r.def.remote_port}
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <div className="flex items-center justify-end gap-0.5">
-                        {running ? (
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            disabled={busy}
-                            onClick={() => void stop(r.active!)}
-                            title="Stop tunnel"
-                          >
-                            {busy ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <X className="h-3.5 w-3.5 text-destructive" />
-                            )}
-                          </Button>
-                        ) : (
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            disabled={busy}
-                            onClick={() => void startSaved(r.def)}
-                            title="Start tunnel"
-                          >
-                            {busy ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Play className="h-3.5 w-3.5 text-primary" />
-                            )}
-                          </Button>
-                        )}
-                        {r.saved ? (
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            onClick={() => void removeSaved(r.def)}
-                            title="Remove saved tunnel"
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
-                          </Button>
-                        ) : (
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            onClick={() => void saveActive(r.def)}
-                            title="Save this tunnel for next time"
-                          >
-                            <Save className="h-3.5 w-3.5 text-muted-foreground" />
-                          </Button>
-                        )}
-                      </div>
                     </td>
                   </tr>
                 );

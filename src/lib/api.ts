@@ -93,7 +93,15 @@ export const termOpen = (
   terminalId: string,
   cols: number,
   rows: number,
-) => invoke<string>("term_open", { sessionId, terminalId, cols, rows });
+  noAutoCd?: boolean,
+) =>
+  invoke<string>("term_open", {
+    sessionId,
+    terminalId,
+    cols,
+    rows,
+    noAutoCd: noAutoCd ?? false,
+  });
 /** Probe the server for the welcome banner's system-info block. */
 export const termSysinfo = (sessionId: string) =>
   invoke<SysInfo>("term_sysinfo", { sessionId });

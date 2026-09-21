@@ -406,7 +406,7 @@ function Row({
           {/* Icon-only actions, hover (`title`) shows the name.
               run --rm only appears for one-off services — the
               idiomatic way to fire a task like `upgrade-db`. */}
-          {svc.is_oneoff && (
+          {svc.is_oneoff ? (
             <Button
               size="sm"
               onClick={onOneOff}
@@ -415,6 +415,10 @@ function Row({
             >
               <Play className="h-3 w-3 text-green-400" />
             </Button>
+          ) : (
+            // Reserve the run --rm slot so the rest of the buttons line up
+            // across rows whether or not this service is a one-off.
+            <span className="inline-block h-6 w-6 shrink-0" aria-hidden />
           )}
           <Button
             size="sm"

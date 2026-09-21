@@ -584,8 +584,11 @@ export function Terminal({
         });
 
         // Listeners are live — now open the backend PTY with our id.
+        // Seeded terminals (docker shell/logs) do their own `cd`, so skip
+        // the backend project auto-cd to avoid it landing inside a
+        // `docker compose exec` container.
         if (disposed) return;
-        await api.termOpen(sessionId, tid, cols, rows);
+        await api.termOpen(sessionId, tid, cols, rows, !!seed);
         if (disposed) {
           await api.termClose(sessionId, tid).catch(() => {});
           return;

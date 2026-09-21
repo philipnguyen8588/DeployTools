@@ -13,10 +13,11 @@ pub async fn term_open(
     terminal_id: String,
     cols: u32,
     rows: u32,
+    no_auto_cd: Option<bool>,
     state: State<'_, AppState>,
 ) -> AppResult<String> {
     let session = state.sessions.get(&session_id)?;
-    terminal::open(session, terminal_id, cols, rows).await
+    terminal::open(session, terminal_id, cols, rows, no_auto_cd.unwrap_or(false)).await
 }
 
 /// Live system information for the welcome banner (an Ubuntu-MOTD-style

@@ -329,8 +329,10 @@ pub async fn docker_compose_exec_shell(
     // auto-shell command that prefers bash but falls back to sh.
     // Backend-initiated, so we mint the id here (the frontend attaches
     // its listener to the returned id).
+    // no_auto_cd = true: this terminal is seeded with a `docker compose
+    // exec` into a container; a late project auto-cd would run inside it.
     let terminal_id =
-        crate::ssh::terminal::open(session.clone(), Uuid::new_v4().to_string(), 80, 24)
+        crate::ssh::terminal::open(session.clone(), Uuid::new_v4().to_string(), 80, 24, true)
             .await?;
 
     // Build the seeded line as user-input to the shell.
