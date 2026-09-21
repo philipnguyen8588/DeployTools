@@ -7,6 +7,7 @@ import type { TunnelInfo } from "@/lib/api";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { cn } from "@/lib/utils";
+import { useTunnels } from "@/stores/tunnels";
 
 interface Props {
   sessionId: string;
@@ -30,7 +31,11 @@ export function TunnelPanel({ sessionId }: Props) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      setTunnels(await api.listTunnels(sessionId));
+      const list = await api.listTunnels(sessionId);
+      setTunnels(list);
+      // Keep the shared count in sync — drives the highlighted Tunnels
+      // tab and the idle-timeout exemption.
+      useTunnels.getState().setCount(sessionId, list.length);
     } catch (e) {
       toast.error(`${e}`);
     } finally {
@@ -134,6 +139,23 @@ export function TunnelPanel({ sessionId }: Props) {
         </div>
       </div>
 
+      {/* Running banner — unmissable signal that tunnels are live and
+          the session is exempt from the idle auto-disconnect. */}
+      {tunnels.length > 0 && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-green-500/30 bg-green-500/10 px-3 py-1.5 text-xs text-green-600 dark:text-green-400">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+          </span>
+          <span className="font-medium">
+            {tunnels.length} tunnel{tunnels.length > 1 ? "s" : ""} running
+          </span>
+          <span className="text-green-600/70 dark:text-green-400/70">
+            · session will not auto-disconnect while tunnels are active
+          </span>
+        </div>
+      )}
+
       {/* Active tunnel list */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tunnels.length === 0 ? (
@@ -160,6 +182,7 @@ export function TunnelPanel({ sessionId }: Props) {
               {tunnels.map((t) => (
                 <tr key={t.id} className="border-b hover:bg-accent">
                   <td className="px-3 py-1.5 font-mono">
+                    <span className="mr-2 inline-block h-2 w-2 rounded-full bg-green-500 align-middle" />
                     127.0.0.1:{t.local_port}
                   </td>
                   <td className="px-3 py-1.5 font-mono text-muted-foreground">

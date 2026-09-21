@@ -85,6 +85,7 @@ import { useServers } from "./stores/servers";
 import { useProjects } from "./stores/projects";
 import { useView } from "./stores/view";
 import { usePrefs } from "./stores/prefs";
+import { useTunnels } from "./stores/tunnels";
 
 export default function App() {
   const { unlocked, lock } = useVault();
@@ -160,6 +161,11 @@ export default function App() {
   // haven't had terminal I/O in `idleTimeoutMin` minutes (read fresh on
   // each tick — so changes made in the Settings dialog apply within a
   // minute, no restart needed). `0` disables the watcher.
+  //
+  // Sessions with ACTIVE SSH TUNNELS are exempt: a tunnel is long-lived
+  // by nature (DB clients, dashboards) and produces no terminal I/O, so
+  // idle-disconnecting would silently kill it. Once the last tunnel is
+  // stopped, the ordinary idle rule applies again on the next tick.
   useEffect(() => {
     if (!unlocked) return;
     let idleTimeoutMin = 30;
@@ -180,6 +186,13 @@ export default function App() {
       for (const t of tabs) {
         if (t.status !== "connected") continue;
         if (now - t.lastActivityAt > ms) {
+          // Ask the backend (source of truth) for live tunnels before
+          // pulling the plug.
+          const tunnels = await api
+            .listTunnels(t.session.id)
+            .catch(() => [] as Awaited<ReturnType<typeof api.listTunnels>>);
+          useTunnels.getState().setCount(t.session.id, tunnels.length);
+          if (tunnels.length > 0) continue; // keep alive while tunneling
           void useSessions
             .getState()
             .markDisconnected(

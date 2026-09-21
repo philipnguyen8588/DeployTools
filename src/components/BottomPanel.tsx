@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import * as api from "@/lib/api";
 import { useSessions } from "@/stores/sessions";
 import { usePrefs } from "@/stores/prefs";
+import { useTunnels } from "@/stores/tunnels";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 // Terminal + ActivityConsole are eagerly imported — Terminal is the
@@ -153,6 +154,20 @@ export function BottomPanel({
   // toolbar button reflects (and flips) the live state.
   const highlightEnabled = usePrefs((s) => s.highlightEnabled);
   const toggleHighlight = usePrefs((s) => s.toggleHighlight);
+
+  // Live tunnel count — lights up the Tunnels tab while any tunnel runs.
+  // Polled every 30 s so tunnels torn down server-side (or via another
+  // window) clear the indicator without opening the panel.
+  const tunnelCount = useTunnels((s) => s.counts[sessionId] ?? 0);
+  useEffect(() => {
+    if (!isSsh) return;
+    void useTunnels.getState().refresh(sessionId);
+    const h = setInterval(
+      () => void useTunnels.getState().refresh(sessionId),
+      30_000,
+    );
+    return () => clearInterval(h);
+  }, [sessionId, isSsh]);
 
   // Initialise lastSeen for whichever tab the user is on right now.
   // Without this, a brand-new tab's lastSeen starts at 0 and any
@@ -289,6 +304,19 @@ export function BottomPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
+  // Let anything in the tree jump this session's BottomPanel to a given
+  // tab (used by deploy/upload flows to surface errors in Activity).
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const e = ev as CustomEvent<{ sessionId: string; tab: string }>;
+      if (!e.detail || e.detail.sessionId !== sessionId) return;
+      activate(e.detail.tab);
+    };
+    window.addEventListener("activate-bottom-tab", handler);
+    return () => window.removeEventListener("activate-bottom-tab", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
   function closeTerminal(id: string) {
     setTerminalTabs((prev) => {
       const remaining = prev.filter((t) => t.id !== id);
@@ -323,7 +351,11 @@ export function BottomPanel({
           ? [{ kind: "docker" as const, id: "docker", label: "Docker" }]
           : []),
         { kind: "resources" as const, id: "resources", label: "Resources" },
-        { kind: "tunnels" as const, id: "tunnels", label: "Tunnels" },
+        {
+          kind: "tunnels" as const,
+          id: "tunnels",
+          label: tunnelCount > 0 ? `Tunnels (${tunnelCount})` : "Tunnels",
+        },
         { kind: "activity" as const, id: "activity", label: "Activity" },
         { kind: "services" as const, id: "services", label: "Services" },
       ]
@@ -373,6 +405,7 @@ export function BottomPanel({
                 !isActive &&
                 sessionActivity > (lastSeen[t.id] ?? 0)
               }
+              highlight={t.kind === "tunnels" && tunnelCount > 0}
               after={
                 isLastTerminal && (
                   <button
@@ -681,6 +714,7 @@ function TabChip({
   label,
   after,
   unread,
+  highlight,
 }: {
   active: boolean;
   onActivate: () => void;
@@ -689,6 +723,10 @@ function TabChip({
   label: string;
   after?: React.ReactNode;
   unread?: boolean;
+  /** Something is actively RUNNING behind this tab (e.g. a live SSH
+   *  tunnel) — tint it green and show a pulsing dot so it stands out
+   *  even when another tab is focused. */
+  highlight?: boolean;
 }) {
   return (
     <div className="flex items-center">
@@ -700,11 +738,21 @@ function TabChip({
           active
             ? "border-border bg-background font-medium text-foreground shadow-sm"
             : "text-muted-foreground hover:bg-accent",
+          highlight &&
+            (active
+              ? "text-green-600 dark:text-green-400"
+              : "text-green-600 hover:text-green-600 dark:text-green-400 dark:hover:text-green-400"),
         )}
         onClick={onActivate}
       >
         <Icon className="h-3 w-3 shrink-0" />
         <span className="truncate">{label}</span>
+        {highlight && (
+          <span className="relative flex h-1.5 w-1.5 shrink-0" title="Tunnel running">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-green-500" />
+          </span>
+        )}
         {unread && (
           <span
             className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
