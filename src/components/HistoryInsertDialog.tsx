@@ -127,7 +127,7 @@ export function HistoryInsertDialog({ serverId, onInsert, onClose }: Props) {
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="w-[92vw] max-w-5xl">
+      <DialogContent className="select-text w-[92vw] max-w-5xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <HistoryIcon className="h-5 w-5 text-primary" />

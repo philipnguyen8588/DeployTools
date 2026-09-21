@@ -1,12 +1,15 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { SearchAddon } from "@xterm/addon-search";
+import { Search as SearchIcon, X as XIcon } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useTheme } from "next-themes";
 
 import * as api from "@/lib/api";
+import { ContextMenu, type ContextMenuItem } from "./ui/context-menu";
 import { useSessions } from "@/stores/sessions";
 import { useServers } from "@/stores/servers";
 import { usePrefs } from "@/stores/prefs";
@@ -194,7 +197,14 @@ export function Terminal({
   const fitRef = useRef<FitAddon | null>(null);
   const highlighterRef = useRef<AnsiHighlighter | null>(null);
   const terminalIdRef = useRef<string | null>(null);
+  const searchRef = useRef<SearchAddon | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const { resolvedTheme } = useTheme();
+
+  // Right-click menu (copy/paste/search) + in-terminal search bar.
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Live-subscribe the output-colorization toggle so the quick button in
   // the terminal toolbar takes effect immediately — the [sessionId] effect
@@ -328,8 +338,8 @@ export function Terminal({
       // Users who need more can scroll back to their shell's own buffer
       // or tail the log directly.
       scrollback: 2000,
-      // Disable xterm's built-in right-click selection so we can use
-      // right-click for paste (Windows convention).
+      // Disable xterm's built-in right-click selection so right-click
+      // opens our Copy / Paste / Search menu instead.
       rightClickSelectsWord: false,
       theme: resolveTheme(
         usePrefs.getState().terminalTheme,
@@ -366,6 +376,9 @@ export function Terminal({
     } catch {
       /* DOM renderer fallback */
     }
+    const searchAddon = new SearchAddon();
+    term.loadAddon(searchAddon);
+    searchRef.current = searchAddon;
     termRef.current = term;
 
     // --- Copy on select, paste on right-click or Ctrl+Shift+V ---
@@ -376,19 +389,11 @@ export function Terminal({
         void navigator.clipboard.writeText(sel).catch(() => {});
       }
     });
-    // Right-click pastes clipboard contents as input bytes.
+    // Right-click opens a Copy / Paste / Search menu at the cursor.
     const onContext = (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      void navigator.clipboard
-        .readText()
-        .then((txt) => {
-          if (!txt) return;
-          term.paste(txt);
-        })
-        .catch(() => {
-          /* clipboard empty or not permitted */
-        });
+      setMenu({ x: e.clientX, y: e.clientY });
     };
     containerRef.current.addEventListener("contextmenu", onContext);
 
@@ -419,6 +424,13 @@ export function Terminal({
           void navigator.clipboard.writeText(sel).catch(() => {});
           return false;
         }
+      }
+      if (k === "f") {
+        // Ctrl+Shift+F → open the in-terminal search bar.
+        e.preventDefault();
+        setSearchOpen(true);
+        setTimeout(() => searchInputRef.current?.focus(), 0);
+        return false;
       }
       return true;
     });
@@ -731,15 +743,134 @@ export function Terminal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
+  // --- Search helpers ---
+  const searchDecorations = {
+    matchBackground: "#8b8000",
+    matchOverviewRuler: "#8b8000",
+    activeMatchBackground: "#c07000",
+    activeMatchColorOverviewRuler: "#c07000",
+  };
+  function runSearch(q: string) {
+    setSearchQuery(q);
+    if (!q) {
+      searchRef.current?.clearDecorations();
+      return;
+    }
+    searchRef.current?.findNext(q, {
+      incremental: true,
+      decorations: searchDecorations,
+    });
+  }
+  function findNext() {
+    if (searchQuery)
+      searchRef.current?.findNext(searchQuery, { decorations: searchDecorations });
+  }
+  function findPrev() {
+    if (searchQuery)
+      searchRef.current?.findPrevious(searchQuery, {
+        decorations: searchDecorations,
+      });
+  }
+  function closeSearch() {
+    setSearchOpen(false);
+    searchRef.current?.clearDecorations();
+    termRef.current?.focus();
+  }
+
+  const menuItems: ContextMenuItem[] = [
+    {
+      label: "Copy",
+      disabled: !termRef.current?.hasSelection(),
+      onClick: () => {
+        const sel = termRef.current?.getSelection();
+        if (sel) void navigator.clipboard.writeText(sel).catch(() => {});
+      },
+    },
+    {
+      label: "Paste",
+      onClick: () => {
+        void navigator.clipboard
+          .readText()
+          .then((txt) => {
+            if (txt) termRef.current?.paste(txt);
+          })
+          .catch(() => {});
+      },
+    },
+    { separator: true, label: "", onClick: () => {} },
+    {
+      label: "Search…",
+      onClick: () => {
+        setSearchOpen(true);
+        setTimeout(() => searchInputRef.current?.focus(), 0);
+      },
+    },
+  ];
+
   return (
-    <div
-      ref={containerRef}
-      className="h-full w-full overflow-hidden rounded-md border bg-[--xterm-bg]"
-      style={{
-        // @ts-expect-error CSS var
-        "--xterm-bg":
-          resolvedTheme === "dark" ? THEME_DARK.background : THEME_LIGHT.background,
-      }}
-    />
+    <div className="relative h-full w-full">
+      <div
+        ref={containerRef}
+        className="h-full w-full overflow-hidden rounded-md border bg-[--xterm-bg]"
+        style={{
+          // @ts-expect-error CSS var
+          "--xterm-bg":
+            resolvedTheme === "dark" ? THEME_DARK.background : THEME_LIGHT.background,
+        }}
+      />
+
+      {searchOpen && (
+        <div className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border bg-popover px-1.5 py-1 shadow-lg">
+          <SearchIcon className="h-3.5 w-3.5 text-muted-foreground" />
+          <input
+            ref={searchInputRef}
+            value={searchQuery}
+            onChange={(e) => runSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (e.shiftKey) findPrev();
+                else findNext();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                closeSearch();
+              }
+            }}
+            placeholder="Find…"
+            className="h-6 w-40 bg-transparent text-xs outline-none"
+          />
+          <button
+            onClick={findPrev}
+            title="Previous (Shift+Enter)"
+            className="rounded px-1 text-xs text-muted-foreground hover:bg-accent"
+          >
+            ↑
+          </button>
+          <button
+            onClick={findNext}
+            title="Next (Enter)"
+            className="rounded px-1 text-xs text-muted-foreground hover:bg-accent"
+          >
+            ↓
+          </button>
+          <button
+            onClick={closeSearch}
+            title="Close (Esc)"
+            className="rounded p-0.5 text-muted-foreground hover:bg-accent"
+          >
+            <XIcon className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menuItems}
+          onClose={() => setMenu(null)}
+        />
+      )}
+    </div>
   );
 }

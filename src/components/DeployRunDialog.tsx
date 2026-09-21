@@ -204,7 +204,7 @@ export function DeployRunDialog({ project, sessionId, profile, onClose }: Props)
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="grid-rows-[auto_1fr_auto] h-[620px] max-h-[85vh] max-w-2xl overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Rocket className="h-4 w-4" />
@@ -217,7 +217,7 @@ export function DeployRunDialog({ project, sessionId, profile, onClose }: Props)
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
           {/* Source picker */}
           <div className="space-y-1.5">
             <Label className="text-xs">Upload</Label>

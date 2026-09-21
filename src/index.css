@@ -133,6 +133,26 @@
   #root {
     height: 100%;
   }
+
+  /* Native feel: no arbitrary text selection across the UI (chrome,
+     labels, sidebar…). Selection is re-enabled only where copying makes
+     sense — the terminal, form fields, and read-only text areas tagged
+     with `.select-text` (activity log, diffs, command history). The
+     -webkit- prefix is required for the macOS WKWebView. */
+  body {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  input,
+  textarea,
+  [contenteditable="true"],
+  .xterm,
+  .xterm *,
+  .select-text,
+  .select-text * {
+    user-select: text;
+    -webkit-user-select: text;
+  }
 }
 
 /* Dialog enter: opacity-only fade so the centered modal doesn't lurch.

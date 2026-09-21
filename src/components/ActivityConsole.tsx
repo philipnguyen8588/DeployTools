@@ -140,7 +140,7 @@ export function ActivityConsole({ sessionId, projectId }: Props) {
   }, [lines]);
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="select-text flex h-full flex-col bg-background">
       <div className="flex items-center justify-between border-b px-2 py-1 text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <CircleDot className="h-3 w-3 text-green-500" />

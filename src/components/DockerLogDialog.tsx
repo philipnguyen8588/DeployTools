@@ -141,7 +141,7 @@ export function DockerLogDialog({
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="flex h-[85vh] max-w-5xl flex-col gap-3 overflow-hidden p-4 sm:max-w-6xl">
+      <DialogContent className="select-text flex h-[85vh] max-w-5xl flex-col gap-3 overflow-hidden p-4 sm:max-w-6xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ScrollText className="h-4 w-4" />

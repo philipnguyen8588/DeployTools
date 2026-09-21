@@ -382,8 +382,7 @@ export function Sidebar() {
 
   // ----- Menus -----
 
-  function openGroupMenu(g: ServerGroup, anchor: HTMLElement) {
-    const r = anchor.getBoundingClientRect();
+  function openGroupMenu(g: ServerGroup, x: number, y: number) {
     const items: ContextMenuItem[] = [
       {
         label: "Add server",
@@ -406,11 +405,10 @@ export function Sidebar() {
         onClick: () => setDeletingGroup(g),
       },
     ];
-    setMenu({ x: r.right - 4, y: r.bottom + 2, items });
+    setMenu({ x, y, items });
   }
 
-  function openServerMenu(s: ServerSummary, anchor: HTMLElement) {
-    const r = anchor.getBoundingClientRect();
+  function openServerMenu(s: ServerSummary, x: number, y: number) {
     const items: ContextMenuItem[] = [
       {
         label: "Add project",
@@ -461,11 +459,10 @@ export function Sidebar() {
       danger: true,
       onClick: () => setDeletingServer(s),
     });
-    setMenu({ x: r.right - 4, y: r.bottom + 2, items });
+    setMenu({ x, y, items });
   }
 
-  function openProjectMenu(p: Project, anchor: HTMLElement) {
-    const r = anchor.getBoundingClientRect();
+  function openProjectMenu(p: Project, x: number, y: number) {
     const items: ContextMenuItem[] = [
       {
         label: "Edit",
@@ -485,7 +482,7 @@ export function Sidebar() {
         onClick: () => setDeletingProject(p),
       },
     ];
-    setMenu({ x: r.right - 4, y: r.bottom + 2, items });
+    setMenu({ x, y, items });
   }
 
   // ----- DnD setup -----
@@ -755,14 +752,15 @@ export function Sidebar() {
                       }
                     }}
                     onCancelRename={() => setRenamingGroup(null)}
-                    onMenu={(anchor) =>
+                    onMenu={(x, y) =>
                       openGroupMenu(
-                        groups.find((x) => x.id === g.id) ?? {
+                        groups.find((x2) => x2.id === g.id) ?? {
                           id: g.id,
                           name: g.name,
                           order: 0,
                         },
-                        anchor,
+                        x,
+                        y,
                       )
                     }
                   >
@@ -959,8 +957,9 @@ interface GroupShellProps {
   name: string;
   expanded: boolean;
   onToggle: () => void;
-  /** Null when the group is virtual ("Ungrouped") — no menu / no rename. */
-  onMenu: ((anchor: HTMLElement) => void) | null;
+  /** Null when the group is virtual ("Ungrouped") — no menu / no rename.
+   *  Called with viewport coords (from a click or right-click). */
+  onMenu: ((x: number, y: number) => void) | null;
   /** True when this is the virtual Ungrouped bucket. */
   virtual?: boolean;
   /** When true, drag attributes are omitted and the row acts as a
@@ -1002,6 +1001,15 @@ function GroupHeader({
       }}
       {...(dragAttrs ?? {})}
       {...(dragListeners ?? {})}
+      onContextMenu={
+        onMenu && !renaming
+          ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onMenu(e.clientX, e.clientY);
+            }
+          : undefined
+      }
       className={cn(
         "group/grp flex cursor-pointer select-none items-center gap-1 rounded-md px-1.5 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:bg-accent/50",
         virtual && "italic",
@@ -1027,7 +1035,8 @@ function GroupHeader({
           aria-label="Group actions"
           onClick={(e) => {
             e.stopPropagation();
-            onMenu(e.currentTarget);
+            const r = e.currentTarget.getBoundingClientRect();
+            onMenu(r.right - 4, r.bottom + 2);
           }}
           onPointerDown={(e) => e.stopPropagation()}
           className="rounded p-0.5 opacity-0 transition-opacity hover:bg-background group-hover/grp:opacity-100"
@@ -1059,7 +1068,7 @@ interface SortableGroupProps {
   onStartRename: () => void;
   onCommitRename: (name: string) => Promise<void> | void;
   onCancelRename: () => void;
-  onMenu: (anchor: HTMLElement) => void;
+  onMenu: (x: number, y: number) => void;
   /** Filtering mode — don't wire drag listeners, keep click-to-toggle only. */
   dragDisabled?: boolean;
   children: React.ReactNode;
@@ -1110,8 +1119,8 @@ interface ServerListProps {
   onToggle: (id: string) => void;
   onOpenServer: (s: ServerSummary) => void;
   onOpenProject: (s: ServerSummary, p: Project) => void;
-  onServerMenu: (s: ServerSummary, anchor: HTMLElement) => void;
-  onProjectMenu: (p: Project, anchor: HTMLElement) => void;
+  onServerMenu: (s: ServerSummary, x: number, y: number) => void;
+  onProjectMenu: (p: Project, x: number, y: number) => void;
   dragDisabled?: boolean;
   /** Keys (`${serverId}:${projectId ?? ""}`) currently connecting. */
   connecting: Set<string>;
@@ -1149,7 +1158,7 @@ function ServerList({
             isOpen={isOpen}
             onToggle={() => onToggle(s.id)}
             onOpen={() => onOpenServer(s)}
-            onMenu={(anchor) => onServerMenu(s, anchor)}
+            onMenu={(x, y) => onServerMenu(s, x, y)}
             dragDisabled={dragDisabled}
             connecting={connecting.has(`${s.id}:`)}
           >
@@ -1169,7 +1178,7 @@ function ServerList({
                       key={p.id}
                       project={p}
                       onOpen={() => onOpenProject(s, p)}
-                      onMenu={(anchor) => onProjectMenu(p, anchor)}
+                      onMenu={(x, y) => onProjectMenu(p, x, y)}
                       dragDisabled={dragDisabled}
                       connecting={connecting.has(`${s.id}:${p.id}`)}
                     />
@@ -1191,7 +1200,7 @@ interface SortableServerProps {
   isOpen: boolean;
   onToggle: () => void;
   onOpen: () => void;
-  onMenu: (anchor: HTMLElement) => void;
+  onMenu: (x: number, y: number) => void;
   dragDisabled?: boolean;
   connecting?: boolean;
   children: React.ReactNode;
@@ -1227,6 +1236,11 @@ function SortableServer({
         {...(dragDisabled ? {} : (attributes as unknown as React.HTMLAttributes<HTMLDivElement>))}
         {...(dragDisabled ? {} : (listeners as unknown as Record<string, unknown>))}
         onClick={onToggle}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onMenu(e.clientX, e.clientY);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
@@ -1294,7 +1308,8 @@ function SortableServer({
             className="rounded p-1 hover:bg-background"
             onClick={(e) => {
               e.stopPropagation();
-              onMenu(e.currentTarget);
+              const r = e.currentTarget.getBoundingClientRect();
+              onMenu(r.right - 4, r.bottom + 2);
             }}
             onPointerDown={(e) => e.stopPropagation()}
           >
@@ -1312,7 +1327,7 @@ function SortableServer({
 interface SortableProjectProps {
   project: Project;
   onOpen: () => void;
-  onMenu: (anchor: HTMLElement) => void;
+  onMenu: (x: number, y: number) => void;
   dragDisabled?: boolean;
   connecting?: boolean;
 }
@@ -1341,6 +1356,11 @@ function SortableProject({
       {...(dragDisabled ? {} : (listeners as unknown as Record<string, unknown>))}
       onClick={() => {
         if (!connecting) onOpen();
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onMenu(e.clientX, e.clientY);
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter" && !connecting) {
@@ -1382,7 +1402,8 @@ function SortableProject({
           className="rounded p-1 hover:bg-background"
           onClick={(e) => {
             e.stopPropagation();
-            onMenu(e.currentTarget);
+            const r = e.currentTarget.getBoundingClientRect();
+            onMenu(r.right - 4, r.bottom + 2);
           }}
           onPointerDown={(e) => e.stopPropagation()}
         >
