@@ -17,6 +17,7 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
+use crate::models::TunnelDef;
 use crate::ssh::activity;
 use crate::ssh::session_pool::SshSession;
 use crate::state::AppState;
@@ -118,6 +119,80 @@ pub async fn list_tunnels(
         .collect();
     out.sort_by_key(|t| t.local_port);
     Ok(out)
+}
+
+// ----- Saved tunnels (persisted per server, in the vault) -----
+
+/// List the saved tunnel definitions for a server.
+#[tauri::command]
+pub async fn list_saved_tunnels(
+    server_id: Uuid,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<TunnelDef>> {
+    state
+        .vault
+        .read(|d| {
+            d.servers
+                .iter()
+                .find(|s| s.id == server_id)
+                .map(|s| s.tunnels.clone())
+                .unwrap_or_default()
+        })
+        .await
+}
+
+/// Save a tunnel definition on a server (idempotent — a duplicate
+/// local/host/port triple is not added twice).
+#[tauri::command]
+pub async fn save_tunnel(
+    server_id: Uuid,
+    local_port: u16,
+    remote_host: String,
+    remote_port: u16,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let def = TunnelDef {
+        local_port,
+        remote_host,
+        remote_port,
+    };
+    state
+        .vault
+        .write(|d| {
+            if let Some(s) = d.servers.iter_mut().find(|s| s.id == server_id) {
+                if !s.tunnels.contains(&def) {
+                    s.tunnels.push(def.clone());
+                    s.tunnels.sort_by_key(|t| t.local_port);
+                }
+            }
+        })
+        .await?;
+    Ok(())
+}
+
+/// Remove a saved tunnel definition from a server.
+#[tauri::command]
+pub async fn delete_saved_tunnel(
+    server_id: Uuid,
+    local_port: u16,
+    remote_host: String,
+    remote_port: u16,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let def = TunnelDef {
+        local_port,
+        remote_host,
+        remote_port,
+    };
+    state
+        .vault
+        .write(|d| {
+            if let Some(s) = d.servers.iter_mut().find(|s| s.id == server_id) {
+                s.tunnels.retain(|t| t != &def);
+            }
+        })
+        .await?;
+    Ok(())
 }
 
 /// Accept connections until the shutdown signal fires or the listener dies.

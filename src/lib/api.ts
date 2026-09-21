@@ -457,6 +457,34 @@ export const stopTunnel = (tunnelId: string) =>
 export const listTunnels = (sessionId?: string) =>
   invoke<TunnelInfo[]>("list_tunnels", { sessionId: sessionId ?? null });
 
+/** A saved tunnel recipe (persisted per server, re-startable across runs). */
+export interface TunnelDef {
+  local_port: number;
+  remote_host: string;
+  remote_port: number;
+}
+export const listSavedTunnels = (serverId: UUID) =>
+  invoke<TunnelDef[]>("list_saved_tunnels", { serverId });
+export const saveTunnel = (
+  serverId: UUID,
+  localPort: number,
+  remoteHost: string,
+  remotePort: number,
+) =>
+  invoke<void>("save_tunnel", { serverId, localPort, remoteHost, remotePort });
+export const deleteSavedTunnel = (
+  serverId: UUID,
+  localPort: number,
+  remoteHost: string,
+  remotePort: number,
+) =>
+  invoke<void>("delete_saved_tunnel", {
+    serverId,
+    localPort,
+    remoteHost,
+    remotePort,
+  });
+
 // --- IDE launcher (VSCode / PyCharm / IntelliJ / Antigravity) ---
 export interface IdeEntry {
   key: string;

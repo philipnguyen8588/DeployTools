@@ -166,6 +166,9 @@ pub fn run() {
             commands::tunnel::start_tunnel,
             commands::tunnel::stop_tunnel,
             commands::tunnel::list_tunnels,
+            commands::tunnel::list_saved_tunnels,
+            commands::tunnel::save_tunnel,
+            commands::tunnel::delete_saved_tunnel,
             // IDE launcher (VSCode / PyCharm / IntelliJ / Antigravity + custom)
             commands::ide::list_ides,
             commands::ide::set_ide_path,

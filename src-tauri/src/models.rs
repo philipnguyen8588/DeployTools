@@ -129,6 +129,21 @@ pub struct Server {
     /// the server falls back to name-sort until the user drags it.
     #[serde(default)]
     pub order: i32,
+
+    /// Saved SSH local-forward tunnels for this server. Remembered across
+    /// app restarts so the user can re-start them with one click. Empty on
+    /// old vaults (serde default).
+    #[serde(default)]
+    pub tunnels: Vec<TunnelDef>,
+}
+
+/// A saved tunnel definition (local port → remote host:port). The live
+/// tunnel is `commands::tunnel::TunnelInfo`; this is the persisted recipe.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TunnelDef {
+    pub local_port: u16,
+    pub remote_host: String,
+    pub remote_port: u16,
 }
 
 fn default_port() -> u16 {
@@ -388,6 +403,7 @@ mod tests {
                 jump_host: None,
                 group_id: None,
                 order: 0,
+                tunnels: vec![],
             }],
             ..Default::default()
         };

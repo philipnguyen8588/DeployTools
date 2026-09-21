@@ -620,7 +620,7 @@ export function BottomPanel({
         )}
         {visited.has("tunnels") && (
           <LazyPane visible={active === "tunnels"}>
-            <TunnelPanel sessionId={sessionId} />
+            <TunnelPanel sessionId={sessionId} serverId={serverId} />
           </LazyPane>
         )}
         {/* Activity mounts eagerly — cheap, and it's the FTP default. */}

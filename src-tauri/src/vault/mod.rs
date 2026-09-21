@@ -349,6 +349,7 @@ mod tests {
                     jump_host: None,
                     group_id: None,
                     order: 0,
+                    tunnels: vec![],
                 });
             })
             .await

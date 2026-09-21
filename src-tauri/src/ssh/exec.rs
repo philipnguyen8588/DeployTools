@@ -292,8 +292,10 @@ fn split_lines(data: &[u8]) -> Vec<String> {
     String::from_utf8_lossy(data)
         .split('\n')
         .map(|l| {
-            // Progress writers (docker compose, npm) redraw a line with
-            // carriage returns; keep only the final state after the last \r.
+            // Drop the trailing CR of a CRLF line first, then collapse any
+            // in-line carriage-return redraws (docker compose / npm progress
+            // rewrite a line with \r) by keeping the text after the last \r.
+            let l = l.strip_suffix('\r').unwrap_or(l);
             let last = l.rsplit('\r').next().unwrap_or(l);
             strip_ansi(last).trim_end().to_string()
         })
