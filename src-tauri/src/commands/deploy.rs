@@ -14,7 +14,7 @@ use crate::ssh::{client, sftp, session_pool::SshSession};
 use crate::state::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use tauri::Emitter;
 use tokio::sync::Mutex;
 
@@ -68,6 +68,11 @@ impl<'a> CancelGuard<'a> {
     fn cancelled(&self) -> bool {
         self.token.load(Ordering::Relaxed)
     }
+    /// The shared cancel flag — used to bridge into a `oneshot` for
+    /// `run_streaming`, which kills a running remote command on cancel.
+    fn token(&self) -> Arc<AtomicBool> {
+        self.token.clone()
+    }
 }
 
 impl Drop for CancelGuard<'_> {
@@ -85,6 +90,145 @@ pub async fn cancel_deploy(job_id: String, state: State<'_, AppState>) -> AppRes
         t.store(true, Ordering::Relaxed);
     }
     Ok(())
+}
+
+/// Outcome of a deploy pipeline (the command-running phase).
+#[derive(Serialize, Clone)]
+pub struct DeployCommandsResult {
+    /// Commands that finished with exit code 0.
+    pub steps_run: u32,
+    pub total: u32,
+    /// 1-based index of the command that failed (exit != 0), if any.
+    pub failed_step: Option<u32>,
+    pub exit_code: Option<i32>,
+    pub cancelled: bool,
+}
+
+/// Run a sequence of shell commands on the server, in order, inside the
+/// project's remote dir. Each command's output streams to the Activity
+/// console (`source = "deploy"`). Stops on the first non-zero exit. Honors
+/// `cancel_deploy(job_id)` — cancel kills the running command, not just the
+/// gap between commands. This is the "run" phase of a deploy profile.
+#[tauri::command]
+pub async fn deploy_run_commands(
+    project_id: Uuid,
+    session_id: String,
+    commands: Vec<String>,
+    job_id: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<DeployCommandsResult> {
+    let (project, _) = resolve_project_server(&state, project_id).await?;
+    let session = state.sessions.get(&session_id)?;
+    // Reject if the session is already running a mutating command (docker
+    // action, snippet, another pipeline). Released on drop.
+    let _guard = state.acquire_mutating(
+        &session_id,
+        format!("deploy pipeline ({} command(s))", commands.len()),
+    )?;
+
+    let cancel = CancelGuard::new(state.inner(), job_id.clone());
+    let total = commands.len() as u32;
+    let mut steps_run = 0u32;
+    let mut failed_step: Option<u32> = None;
+    let mut exit_code: Option<i32> = None;
+    let mut cancelled = false;
+
+    let remote_dir = project.remote_path.trim_end_matches('/').to_string();
+
+    for (i, cmd) in commands.iter().enumerate() {
+        let step = (i + 1) as u32;
+        if cancel.cancelled() {
+            cancelled = true;
+            break;
+        }
+        emit_progress(&state.app, &job_id, step, total, cmd);
+        crate::ssh::activity::info(
+            &state.app,
+            "deploy",
+            format!("▶ step {step}/{total}: $ {cmd}"),
+            Some(&session_id),
+        );
+
+        // Bridge the AtomicBool cancel flag → a oneshot the streamer polls,
+        // so pressing Cancel EOFs the channel and kills the remote command.
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let tok = cancel.token();
+        let watcher = tokio::spawn(async move {
+            loop {
+                if tok.load(Ordering::Relaxed) {
+                    let _ = tx.send(());
+                    break;
+                }
+                if tx.is_closed() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        });
+
+        let argv = vec!["sh".to_string(), "-c".into(), cmd.clone()];
+        let res = crate::ssh::exec::run_streaming(
+            session.clone(),
+            Some(&remote_dir),
+            &argv,
+            "deploy",
+            crate::ssh::exec::ExecOpts {
+                batch: true,
+                ..Default::default()
+            },
+            Some(rx),
+        )
+        .await;
+        watcher.abort();
+
+        if cancel.cancelled() {
+            cancelled = true;
+            crate::ssh::activity::warn(
+                &state.app,
+                "deploy",
+                format!("■ step {step}/{total} cancelled"),
+                Some(&session_id),
+            );
+            break;
+        }
+
+        let result = res?;
+        if result.exit != 0 {
+            crate::ssh::activity::error(
+                &state.app,
+                "deploy",
+                format!("✗ step {step}/{total} failed (exit {})", result.exit),
+                Some(&session_id),
+            );
+            failed_step = Some(step);
+            exit_code = Some(result.exit);
+            break;
+        }
+        steps_run += 1;
+        crate::ssh::activity::success(
+            &state.app,
+            "deploy",
+            format!("✓ step {step}/{total} done"),
+            Some(&session_id),
+        );
+    }
+
+    if failed_step.is_none() && !cancelled {
+        crate::ssh::activity::success(
+            &state.app,
+            "deploy",
+            format!("✓ deploy pipeline complete — {steps_run}/{total} command(s)"),
+            Some(&session_id),
+        );
+    }
+
+    Ok(DeployCommandsResult {
+        steps_run,
+        total,
+        failed_step,
+        exit_code,
+        cancelled,
+    })
 }
 
 /// Upload one project-relative file to its mapped remote path (with an
@@ -137,10 +281,25 @@ pub async fn deploy_file(
     upload_one(&project, &session, &relative_path).await
 }
 
+/// Result of a fault-tolerant batch upload.
+#[derive(Serialize, Clone)]
+pub struct UploadStats {
+    /// Files uploaded successfully.
+    pub uploaded: u32,
+    /// Files skipped due to per-file errors (permission, etc.).
+    pub failed: Vec<crate::ssh::sftp::FailedItem>,
+    /// True if the batch stopped early due to cancellation.
+    pub cancelled: bool,
+}
+
 /// Upload an explicit list of project-relative files, emitting per-file
 /// progress on `deploy-progress://{job_id}` and honouring `cancel_deploy`.
 /// Used by the Git panel (Changes / commit files) so its upload toast has
-/// the same count + Cancel UX as the rest of the app. Returns files sent.
+/// the same count + Cancel UX as the rest of the app.
+///
+/// Fault-tolerant: a file that fails is skipped (see `upload_batch`); the
+/// returned `UploadStats.failed` lists them so the UI can surface a
+/// summary instead of aborting the whole batch.
 #[tauri::command]
 pub async fn deploy_files(
     project_id: Uuid,
@@ -148,7 +307,7 @@ pub async fn deploy_files(
     session_id: Option<String>,
     job_id: Option<String>,
     state: State<'_, AppState>,
-) -> AppResult<u32> {
+) -> AppResult<UploadStats> {
     let (project, server) = resolve_project_server(&state, project_id).await?;
     let session = match session_id {
         Some(id) => state.sessions.get(&id)?,
@@ -165,17 +324,17 @@ pub async fn deploy_files(
     }
     let app = state.app.clone();
     let job = job_id.clone();
-    let sid = session.id.clone();
-    crate::ssh::sftp::upload_batch(
+    let stats = crate::ssh::sftp::upload_batch(
         &session,
         &pairs,
         |n, remote| emit_progress(&app, &job, n, total, remote),
         || cancel.cancelled(),
     )
-    .await
-    .map_err(|e| {
-        crate::ssh::activity::error(&state.app, "sftp", format!("✗ upload: {e}"), Some(&sid));
-        e
+    .await?;
+    Ok(UploadStats {
+        uploaded: stats.ok,
+        failed: stats.failed,
+        cancelled: stats.cancelled,
     })
 }
 
@@ -191,7 +350,7 @@ pub async fn deploy_folder(
     session_id: Option<String>,
     job_id: Option<String>,
     state: State<'_, AppState>,
-) -> AppResult<u32> {
+) -> AppResult<UploadStats> {
     let (project, server) = resolve_project_server(&state, project_id).await?;
 
     // Validate local root lies inside project.local_path
@@ -265,36 +424,35 @@ pub async fn deploy_folder(
 
     let app = state.app.clone();
     let job = job_id.clone();
-    let sid = session.id.clone();
-    let uploaded = crate::ssh::sftp::upload_batch(
+    let stats = crate::ssh::sftp::upload_batch(
         &session,
         &pairs,
         |n, remote| emit_progress(&app, &job, n, total, remote),
         || cancel.cancelled(),
     )
-    .await
-    .map_err(|e| {
-        crate::ssh::activity::error(&state.app, "sftp", format!("✗ upload: {e}"), Some(&sid));
-        e
-    })?;
+    .await?;
 
-    if cancel.cancelled() {
+    if stats.cancelled {
         crate::ssh::activity::warn(
             &state.app,
             "sftp",
-            format!("folder upload cancelled after {uploaded}/{total} files"),
+            format!("folder upload cancelled after {}/{total} files", stats.ok),
             Some(&session.id),
         );
     } else {
         crate::ssh::activity::success(
             &state.app,
             "sftp",
-            format!("✓ folder upload done ({uploaded} files → {remote_root})"),
+            format!("✓ folder upload done ({} files → {remote_root})", stats.ok),
             Some(&session.id),
         );
     }
 
-    Ok(uploaded)
+    Ok(UploadStats {
+        uploaded: stats.ok,
+        failed: stats.failed,
+        cancelled: stats.cancelled,
+    })
 }
 
 /// Walk a local directory, collecting relative file paths (files only),
@@ -339,6 +497,9 @@ pub struct DownloadStats {
     /// Top-level paths skipped because they lie outside the project's
     /// remote base (so they have no mapped local destination).
     pub skipped: u32,
+    /// Files that failed to download (permission, unreadable, …) and were
+    /// skipped — see the red Activity lines for details.
+    pub failed: u32,
 }
 
 /// Download one or more remote paths straight into the project's mapped
@@ -362,6 +523,7 @@ pub async fn download_to_mapped(
     let mut done = 0u32;
     let mut downloaded = 0u32;
     let mut skipped = 0u32;
+    let mut failed = 0u32;
 
     for remote in &remote_paths {
         if cancel.cancelled() {
@@ -400,31 +562,58 @@ pub async fn download_to_mapped(
             project.local_path.join(&rel)
         };
 
-        downloaded += crate::ssh::sftp::download_tree(&session, remote, &local_target).await?;
+        let (w, f) = crate::ssh::sftp::download_tree(&session, remote, &local_target).await?;
+        downloaded += w;
+        failed += f;
         done += 1;
         emit_progress(&state.app, &job_id, done, total, remote);
+    }
+
+    if failed > 0 {
+        crate::ssh::activity::error(
+            &state.app,
+            "sftp",
+            format!("✗ {failed} file(s) failed to download — see errors above"),
+            Some(&session.id),
+        );
     }
 
     Ok(DownloadStats {
         downloaded,
         skipped,
+        failed,
     })
 }
 
 /// Download a single remote path (file or directory) into a chosen local
-/// directory, preserving the remote basename. Returns files written.
+/// directory, preserving the remote basename. Fault-tolerant: unreadable
+/// files inside a directory are skipped and counted in `failed`.
 #[tauri::command]
 pub async fn download_to(
     session_id: String,
     remote_path: String,
     local_dir: String,
     state: State<'_, AppState>,
-) -> AppResult<u32> {
+) -> AppResult<DownloadStats> {
     crate::ssh::sftp::validate_remote_path(&remote_path)?;
     let session = state.sessions.get(&session_id)?;
     let base = remote_basename(&remote_path);
     let target = Path::new(&local_dir).join(base);
-    crate::ssh::sftp::download_tree(&session, &remote_path, &target).await
+    let (downloaded, failed) =
+        crate::ssh::sftp::download_tree(&session, &remote_path, &target).await?;
+    if failed > 0 {
+        crate::ssh::activity::error(
+            &state.app,
+            "sftp",
+            format!("✗ {failed} file(s) failed to download — see errors above"),
+            Some(&session.id),
+        );
+    }
+    Ok(DownloadStats {
+        downloaded,
+        skipped: 0,
+        failed,
+    })
 }
 
 /// Native SFTP sync — a pure-Rust "rsync-lite" that works without any
@@ -580,6 +769,7 @@ pub async fn deploy_sync(
     let cancel = CancelGuard::new(state.inner(), job_id.clone());
     let total = (to_upload.len() + to_delete.len()) as u32;
     let mut uploaded = 0u32;
+    let mut failed = 0u32;
     let mut upload_err: Option<crate::errors::AppError> = None;
     if !to_upload.is_empty() {
         let pairs: Vec<(std::path::PathBuf, String)> = to_upload
@@ -588,24 +778,36 @@ pub async fn deploy_sync(
             .collect();
         let app = state.app.clone();
         let jid = job_id.clone();
+        // remote_full → rel, so the success callback (which only reports the
+        // remote path) can update the manifest for the file that landed.
+        let rel_by_remote: std::collections::HashMap<String, String> = pairs
+            .iter()
+            .zip(to_upload.iter())
+            .map(|((_, remote), rel)| (remote.clone(), rel.clone()))
+            .collect();
         match crate::ssh::sftp::upload_batch(
             &session,
             &pairs,
-            |n, _remote| {
-                // upload_batch walks `pairs` in slice order and reports only
-                // after a file lands — so n-1 indexes straight into to_upload.
-                let rel = &to_upload[(n - 1) as usize];
-                // Record the content hash now that the file is on the server.
-                if let Some(h) = upload_hash.get(rel) {
-                    new_manifest.insert(rel.clone(), h.clone());
+            |n, remote| {
+                // Record the content hash only for files that actually
+                // landed (failed files are skipped, never reach here) —
+                // so the manifest stays consistent and failures re-upload
+                // next sync.
+                if let Some(rel) = rel_by_remote.get(remote) {
+                    if let Some(h) = upload_hash.get(rel) {
+                        new_manifest.insert(rel.clone(), h.clone());
+                    }
+                    emit_progress(&app, &jid, n, total, rel);
                 }
-                emit_progress(&app, &jid, n, total, rel);
             },
             || cancel.cancelled(),
         )
         .await
         {
-            Ok(n) => uploaded = n,
+            Ok(stats) => {
+                uploaded = stats.ok;
+                failed = stats.failed.len() as u32;
+            }
             Err(e) => {
                 crate::ssh::activity::error(
                     &state.app,
@@ -670,6 +872,15 @@ pub async fn deploy_sync(
             format!("sync cancelled — {uploaded} uploaded, {deleted} deleted so far"),
             Some(&sid),
         );
+    } else if failed > 0 {
+        crate::ssh::activity::error(
+            &state.app,
+            "sync",
+            format!(
+                "sync done with errors — {uploaded} uploaded, {failed} failed, {deleted} deleted"
+            ),
+            Some(&sid),
+        );
     } else {
         crate::ssh::activity::success(
             &state.app,
@@ -686,6 +897,7 @@ pub async fn deploy_sync(
         uploaded,
         deleted,
         unchanged: (local_map.len() as u32).saturating_sub(uploaded),
+        failed,
     })
 }
 
@@ -694,6 +906,8 @@ pub struct SyncStats {
     pub uploaded: u32,
     pub deleted: u32,
     pub unchanged: u32,
+    /// Files that failed to upload (skipped) during the sync.
+    pub failed: u32,
 }
 
 /// Run rsync for a project. Streams progress via `rsync-log://{project_id}`.
@@ -727,6 +941,10 @@ pub struct SmartSyncResult {
     /// "rsync" or "sftp".
     pub engine: String,
     pub summary: String,
+    /// Files that failed to upload (SFTP engine only; rsync aborts on its
+    /// own). Lets the UI surface a warning + jump to Activity.
+    #[serde(default)]
+    pub failed: u32,
 }
 
 /// Sync a project preferring rsync (fast, delta-transfer, catches same-size
@@ -789,15 +1007,21 @@ pub async fn deploy_smart_sync(
                 "Synced via rsync{}",
                 if delete_extraneous { " (+delete)" } else { "" }
             ),
+            failed: 0,
         })
     } else {
         let stats = deploy_sync(project_id, session_id, delete_extraneous, job_id, state).await?;
+        let mut summary = format!(
+            "{} uploaded · {} deleted · {} unchanged",
+            stats.uploaded, stats.deleted, stats.unchanged
+        );
+        if stats.failed > 0 {
+            summary.push_str(&format!(" · {} failed", stats.failed));
+        }
         Ok(SmartSyncResult {
             engine: "sftp".to_string(),
-            summary: format!(
-                "{} uploaded · {} deleted · {} unchanged",
-                stats.uploaded, stats.deleted, stats.unchanged
-            ),
+            summary,
+            failed: stats.failed,
         })
     }
 }

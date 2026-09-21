@@ -16,7 +16,7 @@ import type { GitCommit, GitFile, GitInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { useConfirm } from "./ConfirmDialog";
-import { runDeployJob } from "@/lib/deployJob";
+import { runDeployJob, jumpToActivity } from "@/lib/deployJob";
 
 interface Props {
   projectId: string;
@@ -193,8 +193,15 @@ function ChangesView({
     setBusy(true);
     try {
       await runDeployJob(`Uploading ${paths.length} file(s)`, async ({ jobId }) => {
-        const n = await api.deployFiles(projectId, paths, sessionId, jobId);
-        return `✓ Uploaded ${n} file(s)`;
+        const r = await api.deployFiles(projectId, paths, sessionId, jobId);
+        if (r.failed.length > 0) {
+          jumpToActivity(sessionId);
+          return {
+            text: `✓ ${r.uploaded} uploaded · ✗ ${r.failed.length} failed — see Activity`,
+            warn: true as const,
+          };
+        }
+        return `✓ Uploaded ${r.uploaded} file(s)`;
       });
       setSelected(new Set());
       void refresh();
@@ -457,8 +464,15 @@ function CommitFilesView({
     setBusy(true);
     try {
       await runDeployJob(`Uploading ${paths.length} file(s)`, async ({ jobId }) => {
-        const n = await api.deployFiles(projectId, paths, sessionId, jobId);
-        return `✓ Uploaded ${n} file(s)`;
+        const r = await api.deployFiles(projectId, paths, sessionId, jobId);
+        if (r.failed.length > 0) {
+          jumpToActivity(sessionId);
+          return {
+            text: `✓ ${r.uploaded} uploaded · ✗ ${r.failed.length} failed — see Activity`,
+            warn: true as const,
+          };
+        }
+        return `✓ Uploaded ${r.uploaded} file(s)`;
       });
     } finally {
       setBusy(false);

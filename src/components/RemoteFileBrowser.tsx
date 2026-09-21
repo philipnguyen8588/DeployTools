@@ -29,7 +29,7 @@ import { CompareDialog } from "./CompareDialog";
 import { CompareFolderDialog } from "./CompareFolderDialog";
 import { FolderGit2 } from "lucide-react";
 import { useConfirm } from "./ConfirmDialog";
-import { runDeployJob } from "@/lib/deployJob";
+import { runDeployJob, jumpToActivity } from "@/lib/deployJob";
 
 interface Props {
   sessionId: string;
@@ -218,6 +218,10 @@ export function RemoteFileBrowser({
       if (res.skipped > 0) {
         msg += ` · skipped ${res.skipped} outside the mapped folder`;
       }
+      if (res.failed > 0) {
+        jumpToActivity(sessionId);
+        return { text: `${msg} · ✗ ${res.failed} failed — see Activity`, warn: true as const };
+      }
       return msg;
     });
   }
@@ -232,12 +236,20 @@ export function RemoteFileBrowser({
       if (typeof dir !== "string") return;
       const p = toast.loading(`Downloading ${e.name}/…`);
       try {
-        const n = await api.downloadTo(sessionId, e.full_path, dir);
-        toast.success(`Downloaded ${e.name}/ — ${n} files`, {
-          id: p,
-          duration: Infinity,
-          closeButton: true,
-        });
+        const res = await api.downloadTo(sessionId, e.full_path, dir);
+        if (res.failed > 0) {
+          jumpToActivity(sessionId);
+          toast.warning(
+            `${e.name}/: ✓ ${res.downloaded} downloaded · ✗ ${res.failed} failed — see Activity`,
+            { id: p, duration: 30_000, closeButton: true },
+          );
+        } else {
+          toast.success(`Downloaded ${e.name}/ — ${res.downloaded} files`, {
+            id: p,
+            duration: Infinity,
+            closeButton: true,
+          });
+        }
       } catch (err) {
         toast.error(`${err}`, { id: p });
       }

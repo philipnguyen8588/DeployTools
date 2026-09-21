@@ -346,6 +346,7 @@ mod tests {
                     },
                     protocol: Default::default(),
                     host_key_fingerprint: None,
+                    jump_host: None,
                     group_id: None,
                     order: 0,
                 });

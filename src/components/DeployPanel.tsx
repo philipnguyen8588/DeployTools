@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import {
   Zap,
   Trash2,
@@ -6,18 +6,30 @@ import {
   Network,
   Code2,
   ChevronDown,
+  Rocket,
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 
 import * as api from "@/lib/api";
+import type { DeployProfile } from "@/lib/types";
 import { useProjects } from "@/stores/projects";
 import { useSessions } from "@/stores/sessions";
 import { Button } from "./ui/button";
 import { ContextMenu, type ContextMenuItem } from "./ui/context-menu";
 import { useConfirm } from "./ConfirmDialog";
-import { runDeployJob } from "@/lib/deployJob";
+import { runDeployJob, jumpToActivity } from "@/lib/deployJob";
 import { IdeIcon } from "./IdeIcon";
+
+// Lazy — only pulled in when the user opens the Deploy menu.
+const DeployRunDialog = lazy(() =>
+  import("./DeployRunDialog").then((m) => ({ default: m.DeployRunDialog })),
+);
+const DeployProfilesDialog = lazy(() =>
+  import("./DeployProfilesDialog").then((m) => ({
+    default: m.DeployProfilesDialog,
+  })),
+);
 
 interface Props {
   projectId: string | null;
@@ -144,6 +156,13 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
             deleteExtraneous,
             jobId,
           );
+          if (r.failed > 0) {
+            if (sessionId) jumpToActivity(sessionId);
+            return {
+              text: `${r.summary} · via ${r.engine} — see Activity`,
+              warn: true as const,
+            };
+          }
           return `✓ ${r.summary} · via ${r.engine}`;
         },
       );
@@ -151,6 +170,34 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
       setRunning(false);
     }
   }
+
+  // Deploy ▾ menu — pick a saved profile to run, or manage the list.
+  const [deployMenu, setDeployMenu] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  const [runProfile, setRunProfile] = useState<DeployProfile | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
+
+  function openDeployMenu(anchor: HTMLElement) {
+    const r = anchor.getBoundingClientRect();
+    setDeployMenu({ x: r.left, y: r.bottom + 2 });
+  }
+
+  const deployMenuItems: ContextMenuItem[] = [
+    ...(project?.deploy_profiles ?? []).map((p) => ({
+      label: p.name,
+      icon: <Rocket className="h-3.5 w-3.5" />,
+      disabled: !sessionId,
+      onClick: () => setRunProfile(p),
+    })),
+    ...((project?.deploy_profiles?.length ?? 0) > 0
+      ? [{ separator: true as const, label: "", onClick: () => {} }]
+      : []),
+    {
+      label: "Manage profiles…",
+      onClick: () => setManageOpen(true),
+    },
+  ];
 
   if (!projectId) {
     return (
@@ -221,6 +268,16 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
         <Trash2 className="mr-1 h-3 w-3" />
         Sync + delete
       </Button>
+      <Button
+        size="xs"
+        variant="secondary"
+        onClick={(e) => openDeployMenu(e.currentTarget)}
+        title="Run a saved deploy profile (upload + commands)"
+      >
+        <Rocket className="mr-1 h-3 w-3" />
+        Deploy
+        <ChevronDown className="ml-0.5 h-3 w-3 opacity-70" />
+      </Button>
 
       {ideMenu && (
         <ContextMenu
@@ -229,6 +286,32 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
           items={ideMenuItems}
           onClose={() => setIdeMenu(null)}
         />
+      )}
+      {deployMenu && (
+        <ContextMenu
+          x={deployMenu.x}
+          y={deployMenu.y}
+          items={deployMenuItems}
+          onClose={() => setDeployMenu(null)}
+        />
+      )}
+      {runProfile && sessionId && project && (
+        <Suspense fallback={null}>
+          <DeployRunDialog
+            project={project}
+            sessionId={sessionId}
+            profile={runProfile}
+            onClose={() => setRunProfile(null)}
+          />
+        </Suspense>
+      )}
+      {manageOpen && project && (
+        <Suspense fallback={null}>
+          <DeployProfilesDialog
+            project={project}
+            onClose={() => setManageOpen(false)}
+          />
+        </Suspense>
       )}
     </motion.div>
   );

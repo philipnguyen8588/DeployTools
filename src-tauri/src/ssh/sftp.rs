@@ -29,6 +29,25 @@ use crate::errors::{AppError, AppResult};
 use crate::ssh::activity;
 use crate::ssh::session_pool::SshSession;
 
+/// One item that failed during a batch transfer (upload or download).
+#[derive(serde::Serialize, Clone)]
+pub struct FailedItem {
+    /// The path that failed (remote path — the thing the user asked to
+    /// transfer).
+    pub path: String,
+    /// Human-readable error message.
+    pub error: String,
+}
+
+/// Outcome of a fault-tolerant batch transfer: how many landed, which
+/// failed (skipped), and whether it stopped early due to cancellation.
+#[derive(serde::Serialize, Clone, Default)]
+pub struct BatchStats {
+    pub ok: u32,
+    pub failed: Vec<FailedItem>,
+    pub cancelled: bool,
+}
+
 /// Directory / file entry returned from `list`.
 #[derive(serde::Serialize, Clone)]
 pub struct RemoteEntry {
@@ -416,15 +435,21 @@ pub async fn upload(
 }
 
 /// Upload many files over a SINGLE raw session (one channel + one SFTP
-/// handshake for the whole batch, instead of per file). `on_file` is
-/// called with the running count after each successful upload; return
-/// `false` from `should_cancel` to stop early. Returns the count uploaded.
+/// handshake for the whole batch, instead of per file).
+///
+/// **Fault-tolerant:** a file that fails (permission denied, unreadable
+/// local file, …) is logged as a red activity line, recorded in
+/// `BatchStats.failed`, and SKIPPED — the batch continues. Only a failure
+/// to open the SFTP channel itself (dead session) aborts with `Err`.
+///
+/// `on_file` is called with the running SUCCESS count after each
+/// successful upload; return `true` from `should_cancel` to stop early.
 pub async fn upload_batch(
     session: &SshSession,
     files: &[(std::path::PathBuf, String)],
     mut on_file: impl FnMut(u32, &str),
     should_cancel: impl Fn() -> bool,
-) -> AppResult<u32> {
+) -> AppResult<BatchStats> {
     let raw = open_raw_sftp(session).await?;
 
     // Pre-create every unique parent directory once (shallow → deep so
@@ -440,16 +465,48 @@ pub async fn upload_batch(
         mkdir_raw(&raw, d).await;
     }
 
-    let mut uploaded = 0u32;
+    let mut stats = BatchStats::default();
     for (local, remote) in files {
         if should_cancel() {
+            stats.cancelled = true;
             break;
         }
-        upload_raw(&raw, session, local, remote).await?;
-        uploaded += 1;
-        on_file(uploaded, remote);
+        match upload_raw(&raw, session, local, remote).await {
+            Ok(()) => {
+                stats.ok += 1;
+                on_file(stats.ok, remote);
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                activity::error(
+                    &session.app,
+                    "sftp",
+                    format!("✗ upload {remote}: {msg}"),
+                    Some(&session.id),
+                );
+                stats.failed.push(FailedItem {
+                    path: remote.clone(),
+                    error: msg,
+                });
+            }
+        }
     }
-    Ok(uploaded)
+
+    if !stats.failed.is_empty() {
+        let list = stats
+            .failed
+            .iter()
+            .map(|f| f.path.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        activity::error(
+            &session.app,
+            "sftp",
+            format!("✗ {} file(s) failed to upload: {list}", stats.failed.len()),
+            Some(&session.id),
+        );
+    }
+    Ok(stats)
 }
 
 pub async fn download(
@@ -525,59 +582,99 @@ pub async fn download(
 ///
 /// For a file, `local_target` is the destination file path. For a
 /// directory, `local_target` is the destination directory — the tree is
-/// recreated underneath it. Returns the number of files downloaded.
+/// recreated underneath it.
+///
+/// **Fault-tolerant:** a file that can't be read/written (permission,
+/// stat failure, …) is logged as a red activity line and SKIPPED — the
+/// rest of the tree continues. Returns `(written, failed)` counts. Only a
+/// failure to open the SFTP channel itself (dead session) aborts `Err`.
 pub fn download_tree<'a>(
     session: &'a SshSession,
     remote_path: &'a str,
     local_target: &'a Path,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = AppResult<u32>> + Send + 'a>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = AppResult<(u32, u32)>> + Send + 'a>> {
     Box::pin(async move {
-        // Determine whether the remote path is a directory.
+        // Determine whether the remote path is a directory. A stat failure
+        // (permission, vanished) counts as one skipped item, not a fatal.
         let is_dir = {
             let sftp = open_sftp(session).await?;
             let sftp = sftp.lock().await;
             match sftp.metadata(remote_path).await {
                 Ok(attrs) => attrs.is_dir(),
                 Err(e) => {
-                    return Err(AppError::Sftp(format!("stat {remote_path}: {e}")));
+                    activity::error(
+                        &session.app,
+                        "sftp",
+                        format!("✗ download {remote_path}: stat: {e}"),
+                        Some(&session.id),
+                    );
+                    return Ok((0, 1));
                 }
             }
         };
 
         if !is_dir {
-            download(session, remote_path, local_target).await?;
-            return Ok(1);
+            return match download(session, remote_path, local_target).await {
+                Ok(()) => Ok((1, 0)),
+                Err(e) => {
+                    activity::error(
+                        &session.app,
+                        "sftp",
+                        format!("✗ download {remote_path}: {e}"),
+                        Some(&session.id),
+                    );
+                    Ok((0, 1))
+                }
+            };
         }
 
-        tokio::fs::create_dir_all(local_target).await?;
+        if let Err(e) = tokio::fs::create_dir_all(local_target).await {
+            activity::error(
+                &session.app,
+                "sftp",
+                format!("✗ download {remote_path}: mkdir local: {e}"),
+                Some(&session.id),
+            );
+            return Ok((0, 1));
+        }
 
         // Read the directory listing (fresh channel, dropped before recursion).
         let children: Vec<(String, bool)> = {
             let sftp = open_sftp(session).await?;
             let sftp = sftp.lock().await;
-            let entries = sftp
-                .read_dir(remote_path)
-                .await
-                .map_err(|e| AppError::Sftp(format!("read_dir {remote_path}: {e}")))?;
-            entries
-                .into_iter()
-                .filter_map(|entry| {
-                    let name = entry.file_name();
-                    if name == "." || name == ".." {
-                        return None;
-                    }
-                    Some((name, entry.metadata().is_dir()))
-                })
-                .collect()
+            match sftp.read_dir(remote_path).await {
+                Ok(entries) => entries
+                    .into_iter()
+                    .filter_map(|entry| {
+                        let name = entry.file_name();
+                        if name == "." || name == ".." {
+                            return None;
+                        }
+                        Some((name, entry.metadata().is_dir()))
+                    })
+                    .collect(),
+                Err(e) => {
+                    activity::error(
+                        &session.app,
+                        "sftp",
+                        format!("✗ download {remote_path}: read_dir: {e}"),
+                        Some(&session.id),
+                    );
+                    return Ok((0, 1));
+                }
+            }
         };
 
-        let mut count = 0u32;
+        let mut written = 0u32;
+        let mut failed = 0u32;
         for (name, _child_is_dir) in children {
             let child_remote = format!("{}/{}", remote_path.trim_end_matches('/'), name);
             let child_local = local_target.join(&name);
-            count += download_tree(session, &child_remote, &child_local).await?;
+            let (w, f) = download_tree(session, &child_remote, &child_local).await?;
+            written += w;
+            failed += f;
         }
-        Ok(count)
+        Ok((written, failed))
     })
 }
 

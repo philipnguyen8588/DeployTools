@@ -24,9 +24,25 @@ export interface DeployJobContext {
   cancelled: () => boolean;
 }
 
+/** Return value of a deploy job's `run`. A plain string → success toast;
+ *  `{ text, warn: true }` → warning toast (e.g. finished but some files
+ *  failed). Both auto-dismiss after 30s with a close button. */
+export type DeployJobResult = string | { text: string; warn: true };
+
+/** Jump this session's BottomPanel to the Activity tab — call it after a
+ *  batch finishes with failures so the user sees the red error lines. */
+export function jumpToActivity(sessionId: string): void {
+  window.dispatchEvent(
+    new CustomEvent("activate-bottom-tab", {
+      detail: { sessionId, tab: "activity" },
+    }),
+  );
+}
+
 export async function runDeployJob(
   label: string,
-  run: (ctx: DeployJobContext) => Promise<string>,
+  run: (ctx: DeployJobContext) => Promise<DeployJobResult>,
+  opts?: { formatProgress?: (p: DeployProgress) => string },
 ): Promise<void> {
   const jobId = crypto.randomUUID();
   const toastId = `deploy-${jobId}`;
@@ -52,20 +68,32 @@ export async function runDeployJob(
     `deploy-progress://${jobId}`,
     (e) => {
       if (cancelled) return;
-      const { done, total, name } = e.payload;
-      const base = name.split("/").pop() || name;
-      render(`${label} ${done}/${total} — ${base}`);
+      if (opts?.formatProgress) {
+        render(opts.formatProgress(e.payload));
+      } else {
+        const { done, total, name } = e.payload;
+        const base = name.split("/").pop() || name;
+        render(`${label} ${done}/${total} — ${base}`);
+      }
     },
   );
 
   try {
-    const summary = await run({ jobId, cancelled: () => cancelled });
+    const result = await run({ jobId, cancelled: () => cancelled });
     if (cancelled) {
       toast.info(`${label} cancelled`, { id: toastId, duration: 4000, action: undefined });
+    } else if (typeof result !== "string" && result.warn) {
+      // Finished but with problems (e.g. some files failed) — warning toast.
+      toast.warning(result.text, {
+        id: toastId,
+        duration: 30_000,
+        closeButton: true,
+        action: undefined,
+      });
     } else {
       // Done — drop the Cancel action and auto-dismiss after 30s (still
       // has a close button if the user wants it gone sooner).
-      toast.success(summary, {
+      toast.success(typeof result === "string" ? result : result.text, {
         id: toastId,
         duration: 30_000,
         closeButton: true,

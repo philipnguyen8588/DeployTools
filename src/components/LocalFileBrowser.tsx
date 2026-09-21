@@ -23,7 +23,7 @@ import { ContextMenu, type ContextMenuItem } from "./ui/context-menu";
 import { CompareDialog } from "./CompareDialog";
 import { CompareFolderDialog } from "./CompareFolderDialog";
 import { useConfirm } from "./ConfirmDialog";
-import { runDeployJob } from "@/lib/deployJob";
+import { runDeployJob, jumpToActivity } from "@/lib/deployJob";
 
 interface Props {
   sessionId: string;
@@ -156,25 +156,39 @@ export function LocalFileBrowser({
     if (!ok) return;
 
     await runDeployJob(`Uploading ${targets.length} item(s)`, async ({ jobId, cancelled }) => {
-      let files = 0;
-      let items = 0;
-      for (const t of targets) {
-        if (cancelled()) break;
-        if (t.is_dir) {
-          files += await api.deployFolder(
-            projectId,
-            t.relative_path,
-            sessionId,
-            jobId,
-          );
-        } else {
-          await api.deployFile(projectId, t.relative_path, sessionId);
-          files += 1;
-        }
-        items += 1;
+      const fileTargets = targets.filter((t) => !t.is_dir);
+      const folderTargets = targets.filter((t) => t.is_dir);
+      let uploaded = 0;
+      let failed = 0;
+
+      // Plain files → one fault-tolerant batch (skips per-file errors).
+      if (fileTargets.length > 0 && !cancelled()) {
+        const r = await api.deployFiles(
+          projectId,
+          fileTargets.map((t) => t.relative_path),
+          sessionId,
+          jobId,
+        );
+        uploaded += r.uploaded;
+        failed += r.failed.length;
       }
+      // Folders recurse — each returns its own stats.
+      for (const t of folderTargets) {
+        if (cancelled()) break;
+        const r = await api.deployFolder(projectId, t.relative_path, sessionId, jobId);
+        uploaded += r.uploaded;
+        failed += r.failed.length;
+      }
+
       setChecked(new Set());
-      return `Uploaded ${items} item(s) — ${files} files`;
+      if (failed > 0) {
+        jumpToActivity(sessionId);
+        return {
+          text: `✓ ${uploaded} uploaded · ✗ ${failed} failed — see Activity`,
+          warn: true as const,
+        };
+      }
+      return `Uploaded ${uploaded} file(s)`;
     });
   }
 
@@ -207,13 +221,20 @@ export function LocalFileBrowser({
     if (e.is_dir) {
       // Folder upload can be long — run it with a progress + cancel toast.
       await runDeployJob(`Upload ${e.name}/`, async ({ jobId }) => {
-        const n = await api.deployFolder(
+        const r = await api.deployFolder(
           projectId,
           e.relative_path,
           sessionId,
           jobId,
         );
-        return `Uploaded ${e.name}/ — ${n} files`;
+        if (r.failed.length > 0) {
+          jumpToActivity(sessionId);
+          return {
+            text: `${e.name}/: ✓ ${r.uploaded} uploaded · ✗ ${r.failed.length} failed — see Activity`,
+            warn: true as const,
+          };
+        }
+        return `Uploaded ${e.name}/ — ${r.uploaded} files`;
       });
       return;
     }

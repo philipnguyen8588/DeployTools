@@ -125,6 +125,7 @@ pub fn run() {
             commands::deploy::download_to_mapped,
             commands::deploy::download_to,
             commands::deploy::cancel_deploy,
+            commands::deploy::deploy_run_commands,
             commands::deploy::list_local_tree,
             commands::deploy::compare_file,
             commands::deploy::compare_folder,

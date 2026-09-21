@@ -141,13 +141,24 @@ export const deployFile = (
     relativePath,
     sessionId: sessionId ?? null,
   });
+/** One file that failed during a batch upload/download. */
+export interface FailedItem {
+  path: string;
+  error: string;
+}
+/** Result of a fault-tolerant batch upload (skips failures, keeps going). */
+export interface UploadStats {
+  uploaded: number;
+  failed: FailedItem[];
+  cancelled: boolean;
+}
 export const deployFiles = (
   projectId: UUID,
   relativePaths: string[],
   sessionId?: string | null,
   jobId?: string | null,
 ) =>
-  invoke<number>("deploy_files", {
+  invoke<UploadStats>("deploy_files", {
     projectId,
     relativePaths,
     sessionId: sessionId ?? null,
@@ -159,7 +170,7 @@ export const deployFolder = (
   sessionId?: string | null,
   jobId?: string | null,
 ) =>
-  invoke<number>("deploy_folder", {
+  invoke<UploadStats>("deploy_folder", {
     projectId,
     relativePath,
     sessionId: sessionId ?? null,
@@ -183,19 +194,22 @@ export const deploySmartSync = (
   deleteExtraneous: boolean,
   jobId?: string | null,
 ) =>
-  invoke<{ engine: string; summary: string }>("deploy_smart_sync", {
-    projectId,
-    sessionId,
-    deleteExtraneous,
-    jobId: jobId ?? null,
-  });
+  invoke<{ engine: string; summary: string; failed: number }>(
+    "deploy_smart_sync",
+    { projectId, sessionId, deleteExtraneous, jobId: jobId ?? null },
+  );
+export interface DownloadStats {
+  downloaded: number;
+  skipped: number;
+  failed: number;
+}
 export const downloadToMapped = (
   projectId: UUID,
   sessionId: string,
   remotePaths: string[],
   jobId?: string | null,
 ) =>
-  invoke<{ downloaded: number; skipped: number }>("download_to_mapped", {
+  invoke<DownloadStats>("download_to_mapped", {
     projectId,
     sessionId,
     remotePaths,
@@ -203,11 +217,32 @@ export const downloadToMapped = (
   });
 export const cancelDeploy = (jobId: string) =>
   invoke<void>("cancel_deploy", { jobId });
+
+/** Result of the command-running phase of a deploy profile. */
+export interface DeployCommandsResult {
+  steps_run: number;
+  total: number;
+  failed_step: number | null;
+  exit_code: number | null;
+  cancelled: boolean;
+}
+export const deployRunCommands = (
+  projectId: UUID,
+  sessionId: string,
+  commands: string[],
+  jobId?: string | null,
+) =>
+  invoke<DeployCommandsResult>("deploy_run_commands", {
+    projectId,
+    sessionId,
+    commands,
+    jobId: jobId ?? null,
+  });
 export const downloadTo = (
   sessionId: string,
   remotePath: string,
   localDir: string,
-) => invoke<number>("download_to", { sessionId, remotePath, localDir });
+) => invoke<DownloadStats>("download_to", { sessionId, remotePath, localDir });
 export const listLocalTree = (projectId: UUID, relativePath: string) =>
   invoke<LocalEntry[]>("list_local_tree", { projectId, relativePath });
 export const compareFile = (

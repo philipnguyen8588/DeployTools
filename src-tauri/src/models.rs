@@ -158,6 +158,21 @@ pub struct Project {
     /// to 0 — projects then sort by name until the user drags them.
     #[serde(default)]
     pub order: i32,
+
+    /// Saved deploy recipes: named sequences of shell commands run in the
+    /// project's remote dir after an upload. Empty on old vaults.
+    #[serde(default)]
+    pub deploy_profiles: Vec<DeployProfile>,
+}
+
+/// A named, reusable deploy recipe: a list of shell commands executed in
+/// order inside the project's `remote_path` (abort on first non-zero exit).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployProfile {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(default)]
+    pub commands: Vec<String>,
 }
 
 fn default_rsync_flags() -> String {
@@ -370,6 +385,7 @@ mod tests {
                 },
                 protocol: Protocol::default(),
                 host_key_fingerprint: None,
+                jump_host: None,
                 group_id: None,
                 order: 0,
             }],
@@ -406,6 +422,7 @@ mod tests {
         assert_eq!(v.servers[0].group_id, None);
         assert_eq!(v.servers[0].order, 0);
         assert_eq!(v.projects[0].order, 0);
+        assert!(v.projects[0].deploy_profiles.is_empty());
         assert!(v.groups.is_empty());
     }
 }

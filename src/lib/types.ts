@@ -62,6 +62,14 @@ export interface ServerGroup {
   order: number;
 }
 
+/** A named deploy recipe: shell commands run in order in the project's
+ *  remote dir after an upload (abort on first non-zero exit). */
+export interface DeployProfile {
+  id: UUID;
+  name: string;
+  commands: string[];
+}
+
 export interface Project {
   id: UUID;
   name: string;
@@ -72,6 +80,8 @@ export interface Project {
   rsync_flags: string;
   /** Position within the parent server (ascending). */
   order?: number;
+  /** Saved deploy recipes (optional — old projects have none). */
+  deploy_profiles?: DeployProfile[];
 }
 
 export interface VaultStatus {
