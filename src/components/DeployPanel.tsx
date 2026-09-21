@@ -214,6 +214,17 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
       className="flex flex-wrap items-center gap-1.5 border-b bg-muted/30 px-3 py-1.5"
     >
       <span className="text-xs font-medium">{projectName}</span>
+      <Button
+        size="xs"
+        variant="secondary"
+        onClick={(e) => openDeployMenu(e.currentTarget)}
+        title="Run a saved deploy profile (upload + commands)"
+      >
+        <Rocket className="mr-1 h-3 w-3" />
+        Deploy
+        <ChevronDown className="ml-0.5 h-3 w-3 opacity-70" />
+      </Button>
+
       <div className="flex-1" />
 
       <Button
@@ -267,16 +278,6 @@ export function DeployPanel({ projectId, projectName, sessionId }: Props) {
       >
         <Trash2 className="mr-1 h-3 w-3" />
         Sync + delete
-      </Button>
-      <Button
-        size="xs"
-        variant="secondary"
-        onClick={(e) => openDeployMenu(e.currentTarget)}
-        title="Run a saved deploy profile (upload + commands)"
-      >
-        <Rocket className="mr-1 h-3 w-3" />
-        Deploy
-        <ChevronDown className="ml-0.5 h-3 w-3 opacity-70" />
       </Button>
 
       {ideMenu && (

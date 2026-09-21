@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Trash2, Rocket } from "lucide-react";
+import { Plus, Trash2, Rocket, Copy } from "lucide-react";
 import { toast } from "sonner";
 
 import type { DeployProfile, Project } from "@/lib/types";
@@ -52,6 +52,16 @@ export function DeployProfilesDialog({ project, onClose }: Props) {
     setSelectedId(p.id);
   }
 
+  function duplicateProfile(src: DeployProfile) {
+    const p: DeployProfile = {
+      id: crypto.randomUUID(),
+      name: `${src.name} (copy)`,
+      commands: [...src.commands],
+    };
+    setProfiles((ps) => [...ps, p]);
+    setSelectedId(p.id);
+  }
+
   async function removeProfile(id: string) {
     const p = profiles.find((x) => x.id === id);
     const ok = await confirm({
@@ -93,7 +103,7 @@ export function DeployProfilesDialog({ project, onClose }: Props) {
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Rocket className="h-4 w-4" />
@@ -158,6 +168,14 @@ export function DeployProfilesDialog({ project, onClose }: Props) {
                       className="h-7 text-xs"
                     />
                   </div>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    onClick={() => duplicateProfile(selected)}
+                    title="Duplicate this profile"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
                   <Button
                     size="icon-sm"
                     variant="ghost"

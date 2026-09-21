@@ -62,14 +62,26 @@ export function DeployRunDialog({ project, sessionId, profile, onClose }: Props)
     };
   }, [project.id]);
 
-  // Lazy-load the commit log the first time the user switches to commits.
+  // Lazy-load the commit log the first time the user switches to commits,
+  // then pre-select the 3 most recent commits (and fetch their files).
   useEffect(() => {
     if (source !== "commits" || commits.length > 0) return;
     let cancelled = false;
     (async () => {
       try {
         const log = await api.gitLog(project.id, 10);
-        if (!cancelled) setCommits(log);
+        if (cancelled) return;
+        setCommits(log);
+        const initial = log.slice(0, MAX_COMMITS);
+        setPickedCommits(new Set(initial.map((c) => c.hash)));
+        for (const c of initial) {
+          try {
+            const f = await api.gitFilesInCommit(project.id, c.hash);
+            if (!cancelled) setCommitFiles((m) => ({ ...m, [c.hash]: f }));
+          } catch {
+            /* skip this commit's files */
+          }
+        }
       } catch (e) {
         if (!cancelled) toast.error(`${e}`);
       }
@@ -192,7 +204,7 @@ export function DeployRunDialog({ project, sessionId, profile, onClose }: Props)
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Rocket className="h-4 w-4" />

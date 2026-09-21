@@ -40,6 +40,17 @@ pub struct ExecOpts {
     /// When set, activity events include this key → makes per-service
     /// filtering possible on the frontend.
     pub tag: Option<String>,
+    /// When set, a stdout line beginning with this marker carries the real
+    /// exit code (the caller appended `printf '<marker>%d' "$?"`). The line
+    /// is consumed (not shown) and its number overrides the SSH exit-status.
+    /// This is the reliable way to get an exit code from commands where the
+    /// server closes the channel without sending `exit-status` (e.g.
+    /// `docker compose run`).
+    pub exit_marker: Option<String>,
+    /// Skip the automatic `$ <command>` announce line. Set when the caller
+    /// already prints its own header (e.g. the deploy pipeline prints
+    /// `▶ step i/N: $ …`) so the raw wrapped command isn't shown too.
+    pub quiet: bool,
 }
 
 /// Run `argv` on the remote (inside `working_dir` if given), streaming
@@ -60,14 +71,17 @@ pub async fn run_streaming(
 
     let (mut channel, _) = open_channel(&session, &command, opts.pty).await?;
 
-    // Announce the command to the activity log (redacted).
-    let argv_str = argv.join(" ");
-    activity::info(
-        &session.app,
-        source,
-        format!("$ {}", redact(&argv_str)),
-        Some(&session.id),
-    );
+    // Announce the command to the activity log (redacted), unless the
+    // caller prints its own header.
+    if !opts.quiet {
+        let argv_str = argv.join(" ");
+        activity::info(
+            &session.app,
+            source,
+            format!("$ {}", redact(&argv_str)),
+            Some(&session.id),
+        );
+    }
 
     // Optional batched emitter for chatty streams.
     let mut buf: Vec<(Level, String)> = Vec::new();
@@ -76,6 +90,9 @@ pub async fn run_streaming(
 
     let mut cancel = cancel;
     let mut exit: ExitCode = -1;
+    // Exit code captured from the caller's sentinel line, if any. Overrides
+    // the SSH exit-status (which some commands never send).
+    let mut marked_exit: Option<ExitCode> = None;
 
     loop {
         // Check for external cancellation between channel reads.
@@ -107,6 +124,15 @@ pub async fn run_streaming(
         match msg {
             Some(ChannelMsg::Data { data }) => {
                 for line in split_lines(&data) {
+                    // Intercept the caller's exit-code sentinel line.
+                    if let Some(marker) = opts.exit_marker.as_deref() {
+                        if let Some(rest) = line.strip_prefix(marker) {
+                            if let Ok(code) = rest.trim().parse::<i32>() {
+                                marked_exit = Some(code);
+                            }
+                            continue; // don't surface the sentinel
+                        }
+                    }
                     push_or_emit(
                         &session,
                         source,
@@ -149,7 +175,11 @@ pub async fn run_streaming(
         flush_batch(&session, source, opts.tag.as_deref(), &mut buf);
     }
 
-    Ok(StreamedResult { exit })
+    // The sentinel exit code (when present) is authoritative — the SSH
+    // exit-status is unreliable for some commands (docker compose run).
+    Ok(StreamedResult {
+        exit: marked_exit.unwrap_or(exit),
+    })
 }
 
 /// Run a short command and capture stdout/stderr into memory. Used by
@@ -259,12 +289,66 @@ async fn open_channel(
 }
 
 fn split_lines(data: &[u8]) -> Vec<String> {
-    // Split on \n — keep CR since it's common in PTY output and harmless.
     String::from_utf8_lossy(data)
-        .split_inclusive('\n')
+        .split('\n')
+        .map(|l| {
+            // Progress writers (docker compose, npm) redraw a line with
+            // carriage returns; keep only the final state after the last \r.
+            let last = l.rsplit('\r').next().unwrap_or(l);
+            strip_ansi(last).trim_end().to_string()
+        })
         .filter(|l| !l.is_empty())
-        .map(|l| l.trim_end_matches('\n').trim_end_matches('\r').to_string())
         .collect()
+}
+
+/// Strip ANSI escape sequences (CSI colors/cursor moves, OSC) and stray
+/// control bytes from a line, so the Activity log shows clean text even
+/// when a tool emits terminal control codes.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => match chars.peek() {
+                // CSI: ESC [ … <final 0x40-0x7E>
+                Some('[') => {
+                    chars.next();
+                    while let Some(&n) = chars.peek() {
+                        chars.next();
+                        if ('\x40'..='\x7e').contains(&n) {
+                            break;
+                        }
+                    }
+                }
+                // OSC: ESC ] … (BEL | ESC \)
+                Some(']') => {
+                    chars.next();
+                    while let Some(&n) = chars.peek() {
+                        chars.next();
+                        if n == '\x07' {
+                            break;
+                        }
+                        if n == '\x1b' {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                // Any other 2-char escape — drop the next char too.
+                _ => {
+                    chars.next();
+                }
+            },
+            // Backspace: erase the previous char (spinner cleanup).
+            '\x08' => {
+                out.pop();
+            }
+            // Drop other control chars (except tab).
+            c if c.is_control() && c != '\t' => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 #[allow(clippy::too_many_arguments)]

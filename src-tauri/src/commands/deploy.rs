@@ -166,7 +166,16 @@ pub async fn deploy_run_commands(
             }
         });
 
-        let argv = vec!["sh".to_string(), "-c".into(), cmd.clone()];
+        // Capture the REAL exit code via a sentinel appended after the
+        // command: some tools (`docker compose run`) let the server close
+        // the channel without an SSH exit-status, which we'd otherwise read
+        // as exit -1 (a false failure). `printf` runs regardless and prints
+        // the command's `$?`; run_streaming intercepts that line, hides it,
+        // and uses it as the authoritative exit code. No PTY — that only
+        // added docker's TTY progress-animation noise without fixing this.
+        const RC_MARKER: &str = "__DEPLOYTOOLS_RC__";
+        let script = format!("{cmd}; printf '{RC_MARKER}%d\\n' \"$?\"");
+        let argv = vec!["sh".to_string(), "-c".into(), script];
         let res = crate::ssh::exec::run_streaming(
             session.clone(),
             Some(&remote_dir),
@@ -174,6 +183,8 @@ pub async fn deploy_run_commands(
             "deploy",
             crate::ssh::exec::ExecOpts {
                 batch: true,
+                exit_marker: Some(RC_MARKER.to_string()),
+                quiet: true,
                 ..Default::default()
             },
             Some(rx),
