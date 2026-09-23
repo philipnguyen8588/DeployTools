@@ -30,6 +30,9 @@ pub struct SysInfo {
     pub welcome: Option<String>,
     /// Server-local timestamp string.
     pub date: Option<String>,
+    /// Server clock as Unix epoch seconds — the UI compares it to the
+    /// local clock to warn about a wrong server date/time.
+    pub epoch: Option<i64>,
     pub load: Option<String>,
     pub processes: Option<String>,
     pub users: Option<String>,
@@ -48,6 +51,7 @@ const SYSINFO_SCRIPT: &str = r#"
 printf 'KERNEL=%s\n' "$(uname -r 2>/dev/null)"
 printf 'ARCH=%s\n' "$(uname -m 2>/dev/null)"
 printf 'DATE=%s\n' "$(date '+%a %b %d %I:%M:%S %p %Z %Y' 2>/dev/null)"
+printf 'EPOCH=%s\n' "$(date +%s 2>/dev/null)"
 printf 'LOAD=%s\n' "$(cut -d' ' -f1 /proc/loadavg 2>/dev/null)"
 printf 'PROCS=%s\n' "$(ls -d /proc/[0-9]* 2>/dev/null | wc -l | tr -d ' ')"
 printf 'USERS=%s\n' "$(who 2>/dev/null | wc -l | tr -d ' ')"
@@ -89,6 +93,7 @@ pub async fn term_sysinfo(
         });
     }
     info.date = get("DATE");
+    info.epoch = get("EPOCH").and_then(|s| s.parse::<i64>().ok());
     info.load = get("LOAD");
     info.processes = get("PROCS");
     info.users = get("USERS");

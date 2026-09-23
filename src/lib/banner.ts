@@ -67,6 +67,28 @@ export interface BannerOpts {
   theme: "dark" | "light";
   /** Server system-info to append inside the box (optional). */
   sysinfo?: BannerSysInfo | null;
+  /** Server clock minus local clock, in seconds (server epoch − local at
+   *  probe time). A large magnitude renders a red "clock is off" warning.
+   *  `null`/undefined when unknown. */
+  clockSkewSec?: number | null;
+}
+
+/** Human-readable clock skew, e.g. "2h 5m ahead" / "1d behind". */
+function humanizeSkew(sec: number): string {
+  const dir = sec >= 0 ? "ahead" : "behind";
+  let s = Math.abs(sec);
+  const d = Math.floor(s / 86400);
+  s -= d * 86400;
+  const h = Math.floor(s / 3600);
+  s -= h * 3600;
+  const m = Math.floor(s / 60);
+  s -= m * 60;
+  const parts: string[] = [];
+  if (d) parts.push(`${d}d`);
+  if (h) parts.push(`${h}h`);
+  if (m) parts.push(`${m}m`);
+  if (!parts.length) parts.push(`${s}s`);
+  return `${parts.join(" ")} ${dir}`;
 }
 
 /** One piece of a row: `t` is the visible text (used for width math), `c`
@@ -144,17 +166,27 @@ export function buildBanner(opts: BannerOpts): string {
 
   // Live system information (Ubuntu-MOTD-style), when probed.
   const si = opts.sysinfo;
-  if (si && (si.welcome || si.load || si.memory || si.disk || si.ipv4)) {
+  if (si && (si.welcome || si.date || si.load || si.memory || si.disk || si.ipv4)) {
     lines.push(blank());
     if (si.welcome) lines.push(row({ t: si.welcome, c: cVal }));
-    if (si.date)
-      lines.push(row({ t: `System information as of ${si.date}`, c: cDim }));
     // Aligned label/value rows — pad the label so the values line up.
     const kv = (label: string, value?: string | null) => {
       if (!value) return;
       const lbl = `${label}:`.padEnd(18);
       lines.push(row({ t: lbl, c: cDim }, { t: value, c: cVal }));
     };
+    // Server clock — always shown; flagged red if far from the local clock.
+    kv("Server time", si.date);
+    const skew = opts.clockSkewSec;
+    if (skew != null && Math.abs(skew) >= 120) {
+      const cRed = `${ESC}[1;31m`;
+      lines.push(
+        row({
+          t: `⚠ Server clock is off by ${humanizeSkew(skew)} — check the server date/timezone`,
+          c: cRed,
+        }),
+      );
+    }
     kv("System load", si.load);
     kv("Processes", si.processes);
     kv("Usage of /", si.disk);

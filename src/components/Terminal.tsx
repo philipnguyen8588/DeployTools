@@ -124,14 +124,30 @@ function terminalFontSize(uiFontSize: number): number {
 /** Per-session cache of the banner's system-info probe, so opening a
  *  second terminal tab reuses it instead of re-running the SSH exec.
  *  Keyed by session id (a reconnect mints a fresh id → fresh probe). */
-const sysinfoCache = new Map<string, SysInfo>();
-async function getSysinfo(sessionId: string): Promise<SysInfo | null> {
+interface CachedSysinfo {
+  info: SysInfo;
+  /** Server epoch − local clock, in seconds, measured at probe time.
+   *  Cached so later terminal tabs show the same (correct) value rather
+   *  than recomputing against a stale epoch. `null` if unavailable. */
+  skewSec: number | null;
+}
+const sysinfoCache = new Map<string, CachedSysinfo>();
+async function getSysinfo(sessionId: string): Promise<CachedSysinfo | null> {
   const cached = sysinfoCache.get(sessionId);
   if (cached) return cached;
   try {
+    const t0 = Date.now();
     const info = await api.termSysinfo(sessionId);
-    sysinfoCache.set(sessionId, info);
-    return info;
+    const t1 = Date.now();
+    // Server captured its epoch somewhere within [t0, t1]; compare against
+    // the midpoint to cancel out the probe's round-trip latency.
+    const skewSec =
+      info.epoch != null
+        ? info.epoch - Math.round((t0 + t1) / 2 / 1000)
+        : null;
+    const entry: CachedSysinfo = { info, skewSec };
+    sysinfoCache.set(sessionId, entry);
+    return entry;
   } catch {
     return null;
   }
@@ -509,7 +525,7 @@ export function Terminal({
         // from the server) BEFORE opening the PTY, so it sits above the
         // shell's own "Last login" / prompt output.
         if (bannerCfg) {
-          const sysinfo = await getSysinfo(sessionId);
+          const probe = await getSysinfo(sessionId);
           if (disposed) return;
           const { sv } = bannerCfg;
           const banner = buildBanner({
@@ -520,7 +536,8 @@ export function Terminal({
             hasFingerprint: sv.has_fingerprint,
             cols: term.cols,
             theme: resolvedTheme === "dark" ? "dark" : "light",
-            sysinfo,
+            sysinfo: probe?.info ?? null,
+            clockSkewSec: probe?.skewSec ?? null,
           });
           term.write(banner);
           if (bannerCfg.hasProject) {

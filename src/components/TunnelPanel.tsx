@@ -260,6 +260,33 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
     <div className="flex h-full flex-col">
       {/* New-tunnel form */}
       <div className="flex flex-wrap items-end gap-2 border-b bg-muted/30 p-2">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-6 gap-1 px-2 text-xs"
+          disabled={bulkBusy || rows.every((r) => r.active)}
+          onClick={() => void startAll()}
+          title="Start every saved tunnel that isn't running"
+        >
+          {bulkBusy ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Play className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+          )}
+          Start all
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-6 gap-1 px-2 text-xs"
+          disabled={bulkBusy || active.length === 0}
+          onClick={() => void stopAll()}
+          title="Stop every running tunnel"
+        >
+          <StopIcon className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />
+          Stop all
+        </Button>
+        <div className="mx-1 h-8 w-px self-center bg-border" />
         <Field label="Name">
           <Input
             value={tunnelName}
@@ -310,33 +337,7 @@ export function TunnelPanel({ sessionId, serverId }: Props) {
           )}
           Start tunnel
         </Button>
-        <div className="ml-auto flex items-center gap-1">
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-6 gap-1 px-2 text-xs"
-            disabled={bulkBusy || rows.every((r) => r.active)}
-            onClick={() => void startAll()}
-            title="Start every saved tunnel that isn't running"
-          >
-            {bulkBusy ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Play className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
-            )}
-            Start all
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-6 gap-1 px-2 text-xs"
-            disabled={bulkBusy || active.length === 0}
-            onClick={() => void stopAll()}
-            title="Stop every running tunnel"
-          >
-            <StopIcon className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />
-            Stop all
-          </Button>
+        <div className="ml-auto">
           <Button
             size="icon-sm"
             variant="ghost"

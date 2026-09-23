@@ -104,6 +104,8 @@ export interface SessionSummary {
 export interface SysInfo {
   welcome: string | null;
   date: string | null;
+  /** Server clock as Unix epoch seconds (for clock-skew detection). */
+  epoch: number | null;
   load: string | null;
   processes: string | null;
   users: string | null;
