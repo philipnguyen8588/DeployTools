@@ -2,9 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
-/* JetBrains Mono — bundled so the terminal renders with IDENTICAL font
-   metrics on every OS (no more SF Mono vs Cascadia vs Consolas size
-   drift between machines). OFL-licensed; woff2 ≈ 95 KB per face. */
+/* JetBrains Mono — bundled for the UI `font-mono` utility (badges,
+   hashes, logs) and as the terminal's fallback face while SF Mono
+   parses. OFL-licensed; woff2 ≈ 95 KB per face. */
 @font-face {
   font-family: "JetBrains Mono";
   src: url("./assets/fonts/JetBrainsMono-Regular.woff2") format("woff2");
@@ -29,6 +29,43 @@
 @font-face {
   font-family: "JetBrains Mono";
   src: url("./assets/fonts/JetBrainsMono-BoldItalic.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: block;
+}
+
+/* SF Mono — the terminal face. local() first so macOS uses the real
+   system SF Mono; other platforms fall back to the bundled OTFs so the
+   terminal looks identical everywhere. (Apple-proprietary font — bundled
+   for personal use only, not for public distribution.) */
+@font-face {
+  font-family: "SF Mono";
+  src: local("SF Mono"), local("SFMono-Regular"),
+    url("./assets/fonts/SFMono-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "SF Mono";
+  src: local("SF Mono Bold"), local("SFMono-Bold"),
+    url("./assets/fonts/SFMono-Bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "SF Mono";
+  src: local("SF Mono Regular Italic"), local("SFMono-RegularItalic"),
+    url("./assets/fonts/SFMono-RegularItalic.otf") format("opentype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: block;
+}
+@font-face {
+  font-family: "SF Mono";
+  src: local("SF Mono Bold Italic"), local("SFMono-BoldItalic"),
+    url("./assets/fonts/SFMono-BoldItalic.otf") format("opentype");
   font-weight: 700;
   font-style: italic;
   font-display: block;

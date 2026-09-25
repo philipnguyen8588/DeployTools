@@ -324,15 +324,15 @@ export function Terminal({
     let disposed = false;
 
     const term = new XTerm({
-      // JetBrains Mono is BUNDLED (see @font-face in index.css) so every
-      // machine renders the terminal with identical font metrics — no more
-      // SF Mono (mac) vs Cascadia/Consolas (Windows) size drift. The
-      // system faces remain as fallbacks only for the first frames before
-      // the woff2 is parsed.
+      // SF Mono — the Terminal.app face. On macOS the @font-face local()
+      // rule resolves to the real system font; elsewhere the bundled OTFs
+      // (see index.css) load, so metrics are identical on every OS.
+      // JetBrains Mono stays as the fallback for the first frames before
+      // the OTF is parsed.
       fontFamily:
-        '"JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace',
+        '"SF Mono", "JetBrains Mono", Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace',
       fontSize: terminalFontSize(usePrefs.getState().uiFontSize),
-      // JetBrains Mono ships static 400/700 faces — ask for exactly 400
+      // SF Mono ships static 400/700 faces — ask for exactly 400
       // (a fractional weight would be snapped/synthesized per-platform,
       // reintroducing cross-machine differences).
       fontWeight: 400,
@@ -367,12 +367,13 @@ export function Terminal({
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(containerRef.current);
-    // xterm measures glyph metrics at open(). If the bundled JetBrains
-    // Mono woff2 hasn't finished parsing yet, it measures the fallback
-    // face instead — so once the font is ready, poke the option to force
-    // a re-measure and refit. No-op when the font was already cached.
+    // xterm measures glyph metrics at open(). If the bundled SF Mono OTF
+    // hasn't finished parsing yet, it measures the fallback face instead —
+    // so once the font is ready, poke the option to force a re-measure and
+    // refit. No-op when the font was already cached (or is the macOS
+    // system SF Mono, which is always ready).
     void document.fonts
-      .load(`${terminalFontSize(usePrefs.getState().uiFontSize)}px "JetBrains Mono"`)
+      .load(`${terminalFontSize(usePrefs.getState().uiFontSize)}px "SF Mono"`)
       .then(() => {
         if (termRef.current === term) {
           const fam = term.options.fontFamily;
