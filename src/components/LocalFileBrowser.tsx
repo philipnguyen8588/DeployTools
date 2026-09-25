@@ -24,6 +24,8 @@ import { CompareDialog } from "./CompareDialog";
 import { CompareFolderDialog } from "./CompareFolderDialog";
 import { useConfirm } from "./ConfirmDialog";
 import { runDeployJob, jumpToActivity } from "@/lib/deployJob";
+import { useProjects } from "@/stores/projects";
+import { findMatchingExcludes } from "@/lib/excludes";
 
 interface Props {
   sessionId: string;
@@ -62,6 +64,8 @@ export function LocalFileBrowser({
   const [compareFor, setCompareFor] = useState<string | null>(null);
   const [compareFolderFor, setCompareFolderFor] = useState<string | null>(null);
   const confirm = useConfirm();
+  const { projects, save } = useProjects();
+  const project = projectId ? projects.find((p) => p.id === projectId) : undefined;
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -93,6 +97,35 @@ export function LocalFileBrowser({
       else next.add(rel);
       return next;
     });
+  }
+
+  async function addExclude(pattern: string) {
+    if (!project || project.excludes.includes(pattern)) return;
+    try {
+      await save({ ...project, excludes: [...project.excludes, pattern] });
+      toast.success(`Excluded ${pattern}`);
+      await refresh(); // backend recomputes the `excluded` flags
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
+  async function removeExcludes(patterns: string[]) {
+    if (!project || patterns.length === 0) return;
+    try {
+      await save({
+        ...project,
+        excludes: project.excludes.filter((p) => !patterns.includes(p)),
+      });
+      toast.success(
+        patterns.length > 1
+          ? `Removed ${patterns.length} exclude patterns`
+          : `Removed ${patterns[0]} from excludes`,
+      );
+      await refresh();
+    } catch (e) {
+      toast.error(`${e}`);
+    }
   }
 
   // Entries actually rendered — optionally hiding excluded ones.
@@ -281,6 +314,36 @@ export function LocalFileBrowser({
           ? setCompareFolderFor(e.relative_path)
           : setCompareFor(e.relative_path),
     });
+    if (project) {
+      const matching = findMatchingExcludes(
+        project.excludes,
+        e.name,
+        e.relative_path,
+      );
+      if (e.excluded && matching.length > 0) {
+        items.push({
+          label:
+            matching.length > 1
+              ? `Remove ${matching.length} exclude patterns`
+              : `Remove from exclude (${matching[0]})`,
+          icon: <Eye className="h-3.5 w-3.5" />,
+          onClick: () => void removeExcludes(matching),
+        });
+      } else if (e.excluded) {
+        items.push({
+          label: "Remove from exclude (built-in)",
+          icon: <Eye className="h-3.5 w-3.5" />,
+          disabled: true,
+          onClick: () => {},
+        });
+      } else {
+        items.push({
+          label: "Add to exclude",
+          icon: <EyeOff className="h-3.5 w-3.5" />,
+          onClick: () => void addExclude(e.relative_path || e.name),
+        });
+      }
+    }
     items.push({ separator: true, label: "", onClick: () => {} });
     items.push({
       label: revealLabel(),

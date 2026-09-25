@@ -25,6 +25,25 @@ const UPLOAD_CHUNK: usize = 255 * 1024;
 /// chunk/RTT (~1 MB/s on a 50 ms link) regardless of bandwidth.
 const UPLOAD_INFLIGHT: usize = 16;
 
+/// Upper bound on opening the SFTP channel + completing the SFTP handshake.
+/// A server that accepts the `sftp` subsystem channel but never speaks SFTP
+/// (e.g. Home Assistant's SSH add-on with `sftp: false`) would otherwise
+/// keep russh-sftp's read task busy-spinning until its internal ~10 s
+/// request timeout. Bounding it here lets us abort sooner — dropping the
+/// timed-out future tears down that spinning task — and surface a clear
+/// message. Kept below russh-sftp's internal timeout so ours fires first.
+const SFTP_INIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Actionable hint appended to every "SFTP unavailable" error.
+const SFTP_UNAVAILABLE_HINT: &str = "the server accepted the SSH connection but its \
+SFTP subsystem did not respond - it is likely disabled. For Home Assistant's \
+\"Advanced SSH & Web Terminal\" add-on, set `sftp: true` in the add-on configuration \
+and restart it.";
+
+fn sftp_unavailable_err(detail: impl std::fmt::Display) -> AppError {
+    AppError::Sftp(format!("SFTP unavailable ({detail}): {SFTP_UNAVAILABLE_HINT}"))
+}
+
 use crate::errors::{AppError, AppResult};
 use crate::ssh::activity;
 use crate::ssh::session_pool::SshSession;
@@ -66,20 +85,49 @@ pub struct RemoteEntry {
 /// a fresh SFTP channel — russh-sftp is cheap to open and avoids
 /// locking contention across concurrent file operations.
 pub async fn open_sftp(session: &SshSession) -> AppResult<Arc<Mutex<SftpSession>>> {
+    ensure_sftp_available(session)?;
     let mut handle = session.handle.lock().await;
     let channel = handle
         .channel_open_session()
         .await
         .map_err(|e| AppError::Ssh(format!("sftp channel: {e}")))?;
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| AppError::Ssh(format!("request sftp: {e}")))?;
+    // Bound the subsystem request: a rejection here means the server has no
+    // SFTP subsystem at all.
+    match tokio::time::timeout(SFTP_INIT_TIMEOUT, channel.request_subsystem(true, "sftp")).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(mark_sftp_unavailable(session, format!("subsystem rejected: {e}"))),
+        Err(_) => return Err(mark_sftp_unavailable(session, "subsystem request timed out")),
+    }
     drop(handle);
-    let sftp = SftpSession::new(channel.into_stream())
-        .await
-        .map_err(|e| AppError::Sftp(format!("sftp init: {e}")))?;
+    // Bound the SFTP handshake. On timeout the future is dropped, which drops
+    // the partially-built session and tears down russh-sftp's spawned tasks.
+    let sftp = match tokio::time::timeout(SFTP_INIT_TIMEOUT, SftpSession::new(channel.into_stream())).await {
+        Ok(Ok(sftp)) => sftp,
+        Ok(Err(e)) => return Err(mark_sftp_unavailable(session, format!("init failed: {e}"))),
+        Err(_) => return Err(mark_sftp_unavailable(session, "init timed out")),
+    };
     Ok(Arc::new(Mutex::new(sftp)))
+}
+
+/// Fast-fail if this session has already been flagged as lacking SFTP, so
+/// repeated file operations don't each open a fresh channel that hangs and
+/// spins CPU. Reset only by reconnecting.
+fn ensure_sftp_available(session: &SshSession) -> AppResult<()> {
+    if session
+        .sftp_unavailable
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        return Err(sftp_unavailable_err("disabled for this session"));
+    }
+    Ok(())
+}
+
+/// Flag the session as SFTP-less and build the actionable error to return.
+fn mark_sftp_unavailable(session: &SshSession, detail: impl std::fmt::Display) -> AppError {
+    session
+        .sftp_unavailable
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    sftp_unavailable_err(detail)
 }
 
 pub async fn list(session: &SshSession, path: &str) -> AppResult<Vec<RemoteEntry>> {
@@ -273,20 +321,24 @@ pub async fn rename(session: &SshSession, from: &str, to: &str) -> AppResult<()>
 /// `write` requests concurrently (the high-level `File` AsyncWrite issues
 /// one WRITE at a time and awaits its ACK — the slow path).
 async fn open_raw_sftp(session: &SshSession) -> AppResult<RawSftpSession> {
+    ensure_sftp_available(session)?;
     let handle = session.handle.lock().await;
     let channel = handle
         .channel_open_session()
         .await
         .map_err(|e| AppError::Ssh(format!("sftp channel: {e}")))?;
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| AppError::Ssh(format!("request sftp: {e}")))?;
+    match tokio::time::timeout(SFTP_INIT_TIMEOUT, channel.request_subsystem(true, "sftp")).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(mark_sftp_unavailable(session, format!("subsystem rejected: {e}"))),
+        Err(_) => return Err(mark_sftp_unavailable(session, "subsystem request timed out")),
+    }
     drop(handle);
     let raw = RawSftpSession::new(channel.into_stream());
-    raw.init()
-        .await
-        .map_err(|e| AppError::Sftp(format!("sftp init: {e}")))?;
+    match tokio::time::timeout(SFTP_INIT_TIMEOUT, raw.init()).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(mark_sftp_unavailable(session, format!("init failed: {e}"))),
+        Err(_) => return Err(mark_sftp_unavailable(session, "init timed out")),
+    }
     Ok(raw)
 }
 

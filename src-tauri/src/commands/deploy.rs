@@ -1624,6 +1624,7 @@ async fn open_ephemeral(
         opened_at: SystemTime::now(),
         app: state.app.clone(),
         capabilities: tokio::sync::RwLock::new(None),
+        sftp_unavailable: std::sync::atomic::AtomicBool::new(false),
     });
     state.sessions.insert(session.clone());
     Ok(session)

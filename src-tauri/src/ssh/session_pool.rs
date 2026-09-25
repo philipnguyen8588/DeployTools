@@ -48,6 +48,13 @@ pub struct SshSession {
     /// Lazily populated on first docker/service action; reused for the
     /// remainder of the session's lifetime.
     pub capabilities: RwLock<Option<SessionCapabilities>>,
+    /// Set once the SFTP subsystem is found unavailable (e.g. the server
+    /// accepts the `sftp` subsystem channel but never completes the SFTP
+    /// handshake — common on Home Assistant's SSH add-on without
+    /// `sftp: true`). Subsequent file operations short-circuit instead of
+    /// opening a fresh channel that would hang and spin CPU. Reset only by
+    /// reconnecting (a new session starts `false`).
+    pub sftp_unavailable: std::sync::atomic::AtomicBool,
 }
 
 /// Writer side of a running terminal. The reader task owns the channel

@@ -46,3 +46,26 @@ export function makeExcludeMatcher(
     return false;
   };
 }
+
+/**
+ * Return the PROJECT patterns (excluding the always-on baseline) that match
+ * this entry — same semantics as {@link makeExcludeMatcher}: a pattern
+ * matches the name, the relative path, or any single path segment. Used by
+ * the file browsers to decide whether to offer "Remove from exclude" and
+ * which patterns to drop.
+ */
+export function findMatchingExcludes(
+  projectExcludes: string[] | undefined,
+  name: string,
+  rel?: string | null,
+): string[] {
+  const segs = rel ? rel.split("/") : [];
+  return (projectExcludes ?? []).filter((p) => {
+    const r = globToRegExp(p);
+    return (
+      r.test(name) ||
+      (rel != null && r.test(rel)) ||
+      segs.some((s) => r.test(s))
+    );
+  });
+}

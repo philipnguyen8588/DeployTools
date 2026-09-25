@@ -19,7 +19,7 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 
 import * as api from "@/lib/api";
 import type { RemoteEntry } from "@/lib/types";
-import { makeExcludeMatcher } from "@/lib/excludes";
+import { makeExcludeMatcher, findMatchingExcludes } from "@/lib/excludes";
 import { useProjects } from "@/stores/projects";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -61,7 +61,10 @@ export function RemoteFileBrowser({
   /** Whether entries matching the project's exclude patterns are shown.
    *  Hidden by default — same as the local browser's eye toggle. */
   const [showExcluded, setShowExcluded] = useState(false);
-  const { projects } = useProjects();
+  const { projects, save } = useProjects();
+  const project = projectId
+    ? projects.find((p) => p.id === projectId)
+    : undefined;
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [compareFor, setCompareFor] = useState<string | null>(null);
   const [compareFolderFor, setCompareFolderFor] = useState<string | null>(null);
@@ -100,12 +103,10 @@ export function RemoteFileBrowser({
   // Exclude matching — mirrors the backend's globset semantics using the
   // mapped project's patterns (+ the always-on baseline). Entries matching
   // a pattern are hidden unless the eye toggle is on.
-  const isExcluded = useMemo(() => {
-    const project = projectId
-      ? projects.find((p) => p.id === projectId)
-      : undefined;
-    return makeExcludeMatcher(project?.excludes);
-  }, [projectId, projects]);
+  const isExcluded = useMemo(
+    () => makeExcludeMatcher(project?.excludes),
+    [project],
+  );
 
   const withFlags = useMemo(
     () =>
@@ -328,6 +329,33 @@ export function RemoteFileBrowser({
     return null;
   }
 
+  async function addExclude(pattern: string) {
+    if (!project || project.excludes.includes(pattern)) return;
+    try {
+      await save({ ...project, excludes: [...project.excludes, pattern] });
+      toast.success(`Excluded ${pattern}`);
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
+  async function removeExcludes(patterns: string[]) {
+    if (!project || patterns.length === 0) return;
+    try {
+      await save({
+        ...project,
+        excludes: project.excludes.filter((p) => !patterns.includes(p)),
+      });
+      toast.success(
+        patterns.length > 1
+          ? `Removed ${patterns.length} exclude patterns`
+          : `Removed ${patterns[0]} from excludes`,
+      );
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
+
   function buildMenuItems(e: RemoteEntry): ContextMenuItem[] {
     const rel = relativeToProject(e.full_path);
     const canMap = !!projectId && rel !== null;
@@ -369,6 +397,33 @@ export function RemoteFileBrowser({
         else setCompareFor(rel);
       },
     });
+    if (project && rel !== null) {
+      const matching = findMatchingExcludes(project.excludes, e.name, rel);
+      const excluded = isExcluded(e.name, rel);
+      if (excluded && matching.length > 0) {
+        items.push({
+          label:
+            matching.length > 1
+              ? `Remove ${matching.length} exclude patterns`
+              : `Remove from exclude (${matching[0]})`,
+          icon: <Eye className="h-3.5 w-3.5" />,
+          onClick: () => void removeExcludes(matching),
+        });
+      } else if (excluded) {
+        items.push({
+          label: "Remove from exclude (built-in)",
+          icon: <Eye className="h-3.5 w-3.5" />,
+          disabled: true,
+          onClick: () => {},
+        });
+      } else {
+        items.push({
+          label: "Add to exclude",
+          icon: <EyeOff className="h-3.5 w-3.5" />,
+          onClick: () => void addExclude(rel || e.name),
+        });
+      }
+    }
     items.push({ separator: true, label: "", onClick: () => {} });
     items.push({
       label: "Rename…",

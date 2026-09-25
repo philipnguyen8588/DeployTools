@@ -75,6 +75,7 @@ pub async fn open_session(
                 opened_at: SystemTime::now(),
                 app: state.app.clone(),
                 capabilities: tokio::sync::RwLock::new(None),
+                sftp_unavailable: std::sync::atomic::AtomicBool::new(false),
             });
             state.sessions.insert(session.clone());
             Ok(SessionSummary {
