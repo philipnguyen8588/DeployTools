@@ -324,14 +324,14 @@ export function Terminal({
     let disposed = false;
 
     const term = new XTerm({
-      // JetBrains Mono is BUNDLED (see @font-face in index.css) so every
-      // machine renders the terminal with identical font metrics — no more
-      // SF Mono (mac) vs Cascadia/Consolas (Windows) size drift. The
-      // system faces remain as fallbacks only for the first frames before
-      // the woff2 is parsed. (SF Mono itself can't be bundled — Apple
-      // license forbids redistribution, and this app ships publicly.)
+      // Geist Mono is BUNDLED (imported in main.tsx) so every machine
+      // renders the terminal with identical font metrics. Chosen for its
+      // UI-sans letterforms — the terminal reads like the Inter file list,
+      // not a "code" font. JetBrains Mono stays as the first-frames
+      // fallback while the woff2 parses. (SF Mono can't be bundled —
+      // Apple license forbids redistribution, and this app ships publicly.)
       fontFamily:
-        '"JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace',
+        '"Geist Mono", "JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace',
       fontSize: terminalFontSize(usePrefs.getState().uiFontSize),
       // Light (300) face — the WebGL renderer draws glyphs heavier than
       // the DOM (no font-smoothing), so 300 here visually matches the
@@ -370,12 +370,12 @@ export function Terminal({
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(containerRef.current);
-    // xterm measures glyph metrics at open(). If the bundled JetBrains
-    // Mono woff2 hasn't finished parsing yet, it measures the fallback
-    // face instead — so once the font is ready, poke the option to force
-    // a re-measure and refit. No-op when the font was already cached.
+    // xterm measures glyph metrics at open(). If the bundled Geist Mono
+    // woff2 hasn't finished parsing yet, it measures the fallback face
+    // instead — so once the font is ready, poke the option to force a
+    // re-measure and refit. No-op when the font was already cached.
     void document.fonts
-      .load(`300 ${terminalFontSize(usePrefs.getState().uiFontSize)}px "JetBrains Mono"`)
+      .load(`300 ${terminalFontSize(usePrefs.getState().uiFontSize)}px "Geist Mono"`)
       .then(() => {
         if (termRef.current === term) {
           const fam = term.options.fontFamily;
