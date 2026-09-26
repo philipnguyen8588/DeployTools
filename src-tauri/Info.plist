@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the generated Info.plist by tauri-bundler (macOS only).
+     macOS 15+ blocks ALL LAN connections until the user grants Local
+     Network permission — and the permission dialog only ever appears when
+     NSLocalNetworkUsageDescription is present. NSBonjourServices lists the
+     mDNS service types we may resolve (.local hostnames for SSH/SFTP). -->
+<plist version="1.0">
+<dict>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>DeployTools connects to servers on your local network over SSH/SFTP to deploy files, open terminals, and manage services.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_ssh._tcp</string>
+    <string>_sftp-ssh._tcp</string>
+  </array>
+</dict>
+</plist>

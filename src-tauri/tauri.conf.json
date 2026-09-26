@@ -46,6 +46,9 @@
     "longDescription": "DeployTools — a secure, lightweight desktop app to deploy web applications from local to remote servers over SSH with rsync, SFTP, and integrated terminal.",
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper" }
+    },
+    "macOS": {
+      "signingIdentity": "-"
     }
   }
 }
