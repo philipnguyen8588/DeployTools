@@ -9,13 +9,6 @@ import { ConfirmProvider } from "./components/ConfirmDialog";
 // Francisco, so the UI reads like macOS on Windows too. Bundled locally
 // so it works offline in the Tauri webview (no CDN / CSP issues).
 import "@fontsource-variable/inter";
-// Geist Mono — the terminal face. A mono designed with UI-sans letterforms
-// (Vercel's Inter-era look), so the terminal reads like the file list
-// instead of a "code" font. Only the faces xterm actually uses.
-import "@fontsource/geist-mono/300.css";
-import "@fontsource/geist-mono/300-italic.css";
-import "@fontsource/geist-mono/700.css";
-import "@fontsource/geist-mono/700-italic.css";
 import "./index.css";
 import "@xterm/xterm/css/xterm.css";
 
