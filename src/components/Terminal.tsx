@@ -333,10 +333,12 @@ export function Terminal({
       fontFamily:
         '"JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace',
       fontSize: terminalFontSize(usePrefs.getState().uiFontSize),
-      // JetBrains Mono ships static 400/700 faces — ask for exactly 400
-      // (a fractional weight would be snapped/synthesized per-platform,
-      // reintroducing cross-machine differences).
-      fontWeight: 400,
+      // Light (300) face — the WebGL renderer draws glyphs heavier than
+      // the DOM (no font-smoothing), so 300 here visually matches the
+      // antialiased 400 used by the Activity console. Static face is
+      // bundled (see index.css); ask for exactly 300 so no platform
+      // synthesizes a different weight.
+      fontWeight: 300,
       // SF Mono's roomy vertical rhythm — Terminal.app spacing.
       lineHeight: 1.2,
       // Terminal.app default: steady block cursor (blink is off).
@@ -373,7 +375,7 @@ export function Terminal({
     // face instead — so once the font is ready, poke the option to force
     // a re-measure and refit. No-op when the font was already cached.
     void document.fonts
-      .load(`${terminalFontSize(usePrefs.getState().uiFontSize)}px "JetBrains Mono"`)
+      .load(`300 ${terminalFontSize(usePrefs.getState().uiFontSize)}px "JetBrains Mono"`)
       .then(() => {
         if (termRef.current === term) {
           const fam = term.options.fontFamily;
