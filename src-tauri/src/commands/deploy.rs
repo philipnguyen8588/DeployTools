@@ -7,6 +7,7 @@ use serde::Serialize;
 use tauri::State;
 use uuid::Uuid;
 
+use super::preview_util;
 use crate::errors::{AppError, AppResult};
 use crate::models::{Project, Server};
 use crate::rsync::runner::{self, RsyncOptions};
@@ -1079,45 +1080,19 @@ pub async fn compare_file(
 ) -> AppResult<FileComparison> {
     use crate::ssh::sftp;
     use similar::{ChangeTag, TextDiff};
-    use tokio::io::AsyncReadExt;
 
-    const MAX_TEXT_BYTES: u64 = 1024 * 1024; // 1 MiB
+    const MAX_TEXT_BYTES: u64 = preview_util::MAX_TEXT_BYTES;
 
     let (project, _) = resolve_project_server(&state, project_id).await?;
     let session = state.sessions.get(&session_id)?;
 
     // Local side
     let local_full = project.local_path.join(&relative_path);
-    let canon_local = tokio::fs::canonicalize(&local_full).await.ok();
-    let canon_base = tokio::fs::canonicalize(&project.local_path).await?;
-    if let Some(cl) = &canon_local {
-        if !cl.starts_with(&canon_base) {
-            return Err(AppError::InvalidPath(format!(
-                "path escapes project root: {relative_path}"
-            )));
-        }
-    }
-    let (local_bytes, local_size, local_mtime, local_exists) = match canon_local {
-        Some(p) if p.is_file() => {
-            let md = tokio::fs::metadata(&p).await?;
-            let size = md.len();
-            let mtime = md
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs());
-            let bytes = if size <= MAX_TEXT_BYTES {
-                let mut f = tokio::fs::File::open(&p).await?;
-                let mut buf = Vec::with_capacity(size as usize);
-                f.read_to_end(&mut buf).await?;
-                Some(buf)
-            } else {
-                None
-            };
-            (bytes, size, mtime, true)
-        }
-        _ => (None, 0u64, None, false),
-    };
+    let (local_bytes, local_size, local_mtime, local_exists) =
+        match read_local_capped(&project, &relative_path).await? {
+            Some(r) => (r.bytes, r.size, r.mtime, true),
+            None => (None, 0u64, None, false),
+        };
 
     // Remote side.
     // IMPORTANT: `relative_path` may come from two sources:
@@ -1181,9 +1156,12 @@ pub async fn compare_file(
     // Detect binary via NUL byte in either side.
     let is_binary = local_bytes
         .as_deref()
-        .map(contains_nul)
+        .map(preview_util::contains_nul)
         .unwrap_or(false)
-        || remote_bytes.as_deref().map(contains_nul).unwrap_or(false);
+        || remote_bytes
+            .as_deref()
+            .map(preview_util::contains_nul)
+            .unwrap_or(false);
 
     // Decode text + build unified diff. Line endings are normalized to
     // LF before comparison so CRLF↔LF differences (common with files
@@ -1263,6 +1241,66 @@ pub async fn compare_file(
         remote_text,
         unified_diff,
     })
+}
+
+/// Capped read of a file under `project.local_path`. Returns `Ok(None)`
+/// when the path doesn't resolve to a file; errors when it escapes the
+/// project root (symlink or `..` tricks).
+pub(crate) async fn read_local_capped(
+    project: &Project,
+    relative_path: &str,
+) -> AppResult<Option<preview_util::CappedRead>> {
+    use tokio::io::AsyncReadExt;
+
+    let local_full = project.local_path.join(relative_path);
+    let canon_local = tokio::fs::canonicalize(&local_full).await.ok();
+    let canon_base = tokio::fs::canonicalize(&project.local_path).await?;
+    if let Some(cl) = &canon_local {
+        if !cl.starts_with(&canon_base) {
+            return Err(AppError::InvalidPath(format!(
+                "path escapes project root: {relative_path}"
+            )));
+        }
+    }
+    match canon_local {
+        Some(p) if p.is_file() => {
+            let md = tokio::fs::metadata(&p).await?;
+            let size = md.len();
+            let mtime = md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs());
+            let bytes = if size <= preview_util::MAX_TEXT_BYTES {
+                let mut f = tokio::fs::File::open(&p).await?;
+                let mut buf = Vec::with_capacity(size as usize);
+                f.read_to_end(&mut buf).await?;
+                Some(buf)
+            } else {
+                None
+            };
+            Ok(Some(preview_util::CappedRead { bytes, size, mtime }))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Read a local project file for the read-only preview dialog. Same 1 MiB
+/// cap and binary sniff as compare — the frontend renders fallbacks for
+/// oversized/binary files.
+#[tauri::command]
+pub async fn read_local_text(
+    project_id: Uuid,
+    relative_path: String,
+    state: State<'_, AppState>,
+) -> AppResult<preview_util::TextFileContent> {
+    let (project, _) = resolve_project_server(&state, project_id).await?;
+    match read_local_capped(&project, &relative_path).await? {
+        Some(read) => Ok(preview_util::classify(read)),
+        None => Err(AppError::InvalidPath(format!(
+            "not a file: {relative_path}"
+        ))),
+    }
 }
 
 /// Internal descriptor used by the recursive folder walk.
@@ -1516,12 +1554,6 @@ fn normalize_newlines(s: &str) -> String {
     // Two-pass, no regex: first CRLF -> LF, then any stray CR -> LF.
     let lf1 = s.replace("\r\n", "\n");
     lf1.replace('\r', "\n")
-}
-
-fn contains_nul(bytes: &[u8]) -> bool {
-    // Sample only the first 8 KiB — big enough to catch most binaries,
-    // small enough to stay fast on large text files.
-    bytes.iter().take(8192).any(|b| *b == 0)
 }
 
 fn prefix_each_line(prefix: &str, s: &str) -> String {

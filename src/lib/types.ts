@@ -146,6 +146,18 @@ export interface ProgressEvent {
   total: number;
 }
 
+/** Read-only file preview payload (read_local_text / sftp_read_text). */
+export interface TextFileContent {
+  /** null when the file is binary, too large, or not valid UTF-8. */
+  text: string | null;
+  /** Size exceeded the 1 MiB cap — nothing was read. */
+  truncated: boolean;
+  /** NUL byte found in the first 8 KiB (or not valid UTF-8). */
+  binary: boolean;
+  size: number;
+  mtime: number | null;
+}
+
 export interface FileComparison {
   local_exists: boolean;
   remote_exists: boolean;

@@ -1,9 +1,16 @@
-import { useEffect, useState } from "react";
-import { GitCompare, Check, FileWarning } from "lucide-react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import {
+  GitCompare,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  FileWarning,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import * as api from "@/lib/api";
 import type { FileComparison } from "@/lib/types";
+import type { DiffViewHandle } from "./MonacoDiffView";
 import {
   Dialog,
   DialogContent,
@@ -11,7 +18,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "./ui/dialog";
+import { Button } from "./ui/button";
 import { cn, formatBytes, formatMtime } from "@/lib/utils";
+
+// Monaco diff — lazy so its ~2 MB chunk loads on first compare only.
+const MonacoDiffView = lazy(() =>
+  import("./MonacoDiffView").then((m) => ({ default: m.MonacoDiffView })),
+);
 
 interface Props {
   projectId: string;
@@ -21,12 +34,10 @@ interface Props {
 }
 
 /**
- * Side-by-side + unified diff view for local vs remote of a single file.
- *
- * Shows three views:
- *   1. A header comparing size / mtime / identical flag
- *   2. Side-by-side panes with line numbers
- *   3. Unified diff with +/- coloring
+ * Local ↔ remote diff of a single file, rendered by the Monaco diff
+ * editor: word-level intra-line highlights, unchanged regions collapsed
+ * (click to expand), side-by-side or inline view, prev/next navigation.
+ * The header keeps the size/mtime/identical summary.
  */
 export function CompareDialog({
   projectId,
@@ -36,7 +47,9 @@ export function CompareDialog({
 }: Props) {
   const [result, setResult] = useState<FileComparison | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<"split" | "diff">("split");
+  const [sideBySide, setSideBySide] = useState(true);
+  const [changes, setChanges] = useState<number | null>(null);
+  const diffRef = useRef<DiffViewHandle>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,44 +94,83 @@ export function CompareDialog({
           <>
             <SummaryRow r={result} />
 
-            <div className="flex shrink-0 gap-1 border-b pb-2">
+            <div className="flex shrink-0 items-center gap-1 border-b pb-2">
               <button
                 className={cn(
                   "rounded px-2 py-1 text-xs transition",
-                  view === "split"
+                  sideBySide
                     ? "bg-primary text-primary-foreground"
                     : "hover:bg-accent",
                 )}
-                onClick={() => setView("split")}
+                onClick={() => setSideBySide(true)}
               >
                 Side-by-side
               </button>
               <button
                 className={cn(
                   "rounded px-2 py-1 text-xs transition",
-                  view === "diff"
+                  !sideBySide
                     ? "bg-primary text-primary-foreground"
                     : "hover:bg-accent",
                 )}
-                onClick={() => setView("diff")}
+                onClick={() => setSideBySide(false)}
               >
-                Unified diff
+                Inline
               </button>
+              {!result.is_binary && (
+                <div className="ml-auto flex items-center gap-1">
+                  {changes != null && (
+                    <span className="mr-1 text-xs text-muted-foreground">
+                      {changes === 0
+                        ? "No changes"
+                        : `${changes} change${changes === 1 ? "" : "s"}`}
+                    </span>
+                  )}
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => diffRef.current?.prev()}
+                    disabled={!changes}
+                    title="Previous change"
+                  >
+                    <ChevronUp className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => diffRef.current?.next()}
+                    disabled={!changes}
+                    title="Next change"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )}
             </div>
 
-            <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden rounded-md border">
               {result.is_binary ? (
-                <div className="flex h-full items-center justify-center gap-2 rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
+                <div className="flex h-full items-center justify-center gap-2 bg-muted/30 p-4 text-sm text-muted-foreground">
                   <FileWarning className="h-4 w-4" />
                   Binary content — showing size/mtime only.
                 </div>
-              ) : view === "split" ? (
-                <SplitView
-                  local={result.local_text ?? ""}
-                  remote={result.remote_text ?? ""}
-                />
               ) : (
-                <UnifiedView diff={result.unified_diff} />
+                <Suspense
+                  fallback={
+                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                      Loading diff viewer…
+                    </div>
+                  }
+                >
+                  <MonacoDiffView
+                    ref={diffRef}
+                    original={result.local_text ?? ""}
+                    modified={result.remote_text ?? ""}
+                    fileName={relativePath}
+                    renderSideBySide={sideBySide}
+                    onStats={setChanges}
+                  />
+                </Suspense>
               )}
             </div>
           </>
@@ -172,73 +224,5 @@ function SummaryRow({ r }: { r: FileComparison }) {
         )}
       </div>
     </div>
-  );
-}
-
-function SplitView({ local, remote }: { local: string; remote: string }) {
-  const localLines = local.split("\n");
-  const remoteLines = remote.split("\n");
-  const maxLen = Math.max(localLines.length, remoteLines.length);
-
-  return (
-    <div className="grid h-full grid-cols-2 gap-2 overflow-auto rounded-md border">
-      <pre className="overflow-x-auto border-r bg-muted/10 p-2 font-mono text-xs leading-5">
-        {Array.from({ length: maxLen }, (_, i) => {
-          const l = localLines[i] ?? "";
-          const r = remoteLines[i] ?? "";
-          const diff = l !== r;
-          return (
-            <div
-              key={i}
-              className={cn("whitespace-pre", diff && "bg-red-500/10")}
-            >
-              <span className="mr-2 inline-block w-8 select-none text-right text-muted-foreground">
-                {i + 1}
-              </span>
-              {l || " "}
-            </div>
-          );
-        })}
-      </pre>
-      <pre className="overflow-x-auto bg-muted/10 p-2 font-mono text-xs leading-5">
-        {Array.from({ length: maxLen }, (_, i) => {
-          const l = localLines[i] ?? "";
-          const r = remoteLines[i] ?? "";
-          const diff = l !== r;
-          return (
-            <div
-              key={i}
-              className={cn("whitespace-pre", diff && "bg-green-500/10")}
-            >
-              <span className="mr-2 inline-block w-8 select-none text-right text-muted-foreground">
-                {i + 1}
-              </span>
-              {r || " "}
-            </div>
-          );
-        })}
-      </pre>
-    </div>
-  );
-}
-
-function UnifiedView({ diff }: { diff: string }) {
-  const lines = diff.split("\n");
-  return (
-    <pre className="h-full overflow-auto rounded-md border bg-muted/10 p-2 font-mono text-xs leading-5">
-      {lines.map((line, i) => {
-        const cls =
-          line.startsWith("+") && !line.startsWith("+++")
-            ? "bg-green-500/15 text-green-700 dark:text-green-400"
-            : line.startsWith("-") && !line.startsWith("---")
-              ? "bg-red-500/15 text-red-700 dark:text-red-400"
-              : "";
-        return (
-          <div key={i} className={cn("whitespace-pre", cls)}>
-            {line || " "}
-          </div>
-        );
-      })}
-    </pre>
   );
 }

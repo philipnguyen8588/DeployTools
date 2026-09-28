@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Folder,
   FileText,
@@ -30,6 +30,11 @@ import { CompareFolderDialog } from "./CompareFolderDialog";
 import { FolderGit2 } from "lucide-react";
 import { useConfirm } from "./ConfirmDialog";
 import { runDeployJob, jumpToActivity } from "@/lib/deployJob";
+
+// Monaco-backed preview — lazy so its ~2 MB chunk loads on first use only.
+const FileViewerDialog = lazy(() =>
+  import("./FileViewerDialog").then((m) => ({ default: m.FileViewerDialog })),
+);
 
 interface Props {
   sessionId: string;
@@ -68,6 +73,7 @@ export function RemoteFileBrowser({
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [compareFor, setCompareFor] = useState<string | null>(null);
   const [compareFolderFor, setCompareFolderFor] = useState<string | null>(null);
+  const [previewFor, setPreviewFor] = useState<RemoteEntry | null>(null);
   const confirm = useConfirm();
 
   const refresh = useCallback(async () => {
@@ -372,6 +378,13 @@ export function RemoteFileBrowser({
       items.push({ separator: true, label: "", onClick: () => {} });
     }
 
+    if (!e.is_dir) {
+      items.push({
+        label: "Preview",
+        icon: <FileText className="h-3.5 w-3.5" />,
+        onClick: () => setPreviewFor(e),
+      });
+    }
     items.push({
       label: "Download to mapped folder",
       icon: <Download className="h-3.5 w-3.5" />,
@@ -547,7 +560,7 @@ export function RemoteFileBrowser({
                 onClick={() => setSelection(e)}
                 onDoubleClick={() => {
                   if (e.is_dir) onPathChange(e.full_path);
-                  else void downloadToDialog(e);
+                  else setPreviewFor(e);
                 }}
                 onContextMenu={(ev) => {
                   ev.preventDefault();
@@ -616,6 +629,17 @@ export function RemoteFileBrowser({
           items={buildMenuItems(menu.entry)}
           onClose={() => setMenu(null)}
         />
+      )}
+
+      {previewFor && (
+        <Suspense fallback={null}>
+          <FileViewerDialog
+            fileName={previewFor.name}
+            pathLabel={previewFor.full_path}
+            load={() => api.readRemoteText(sessionId, previewFor.full_path)}
+            onClose={() => setPreviewFor(null)}
+          />
+        </Suspense>
       )}
 
       {compareFor !== null && projectId && (

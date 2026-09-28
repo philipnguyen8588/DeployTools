@@ -115,6 +115,7 @@ pub fn run() {
             commands::sftp::sftp_rename,
             commands::sftp::sftp_upload,
             commands::sftp::sftp_download,
+            commands::sftp::sftp_read_text,
             // Deploy
             commands::deploy::deploy_file,
             commands::deploy::deploy_files,
@@ -129,6 +130,7 @@ pub fn run() {
             commands::deploy::list_local_tree,
             commands::deploy::compare_file,
             commands::deploy::compare_folder,
+            commands::deploy::read_local_text,
             // Git
             commands::git::git_info,
             commands::git::git_status,

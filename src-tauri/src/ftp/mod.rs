@@ -340,3 +340,48 @@ pub async fn download(
     );
     Ok(())
 }
+
+/// Read a remote file fully into memory, but only when its size is within
+/// `max` bytes (SIZE is checked first so oversized files transfer nothing).
+/// FTP has no mtime in this path — callers get `mtime: None`.
+pub async fn read_capped(
+    session: &FtpSession,
+    remote_path: &str,
+    max: u64,
+) -> AppResult<crate::commands::preview_util::CappedRead> {
+    let mut s = session.stream.lock().await;
+    let size = s
+        .size(remote_path)
+        .await
+        .map_err(|e| AppError::Other(format!("ftp SIZE: {e}")))? as u64;
+    if size > max {
+        return Ok(crate::commands::preview_util::CappedRead {
+            bytes: None,
+            size,
+            mtime: None,
+        });
+    }
+    let mut data = s
+        .retr_as_stream(remote_path)
+        .await
+        .map_err(|e| AppError::Other(format!("ftp RETR: {e}")))?;
+    let mut out = Vec::with_capacity(size as usize);
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = FutRead::read(&mut data, &mut buf)
+            .await
+            .map_err(|e| AppError::Other(format!("ftp read: {e}")))?;
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n]);
+    }
+    s.finalize_retr_stream(data)
+        .await
+        .map_err(|e| AppError::Other(format!("ftp finalize read: {e}")))?;
+    Ok(crate::commands::preview_util::CappedRead {
+        bytes: Some(out),
+        size,
+        mtime: None,
+    })
+}

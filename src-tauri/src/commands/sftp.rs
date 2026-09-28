@@ -118,6 +118,48 @@ pub async fn sftp_upload(
     }
 }
 
+/// Read a remote file into memory for the read-only preview dialog.
+/// Dispatches to SFTP or FTP; 1 MiB cap + binary sniff happen in
+/// `preview_util` so the behavior matches the local preview exactly.
+#[tauri::command]
+pub async fn sftp_read_text(
+    session_id: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> AppResult<super::preview_util::TextFileContent> {
+    use super::preview_util;
+
+    sftp::validate_remote_path(&path)?;
+    let read = match pick(&state, &session_id)? {
+        Pool::Ssh(session) => {
+            sftp::read_capped(&session, &path, preview_util::MAX_TEXT_BYTES).await
+        }
+        Pool::Ftp(session) => {
+            crate::ftp::read_capped(&session, &path, preview_util::MAX_TEXT_BYTES).await
+        }
+    };
+    match read {
+        Ok(r) => {
+            crate::ssh::activity::info(
+                &state.app,
+                "preview",
+                format!("preview {path}"),
+                Some(&session_id),
+            );
+            Ok(preview_util::classify(r))
+        }
+        Err(e) => {
+            crate::ssh::activity::warn(
+                &state.app,
+                "preview",
+                format!("preview failed for {path}: {e}"),
+                Some(&session_id),
+            );
+            Err(e)
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn sftp_download(
     session_id: String,

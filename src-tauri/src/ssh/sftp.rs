@@ -561,6 +561,43 @@ pub async fn upload_batch(
     Ok(stats)
 }
 
+/// Read a remote file fully into memory, but only when its size is within
+/// `max` bytes. Larger files return `bytes: None` so callers can show a
+/// "too large" fallback without transferring anything.
+pub async fn read_capped(
+    session: &SshSession,
+    path: &str,
+    max: u64,
+) -> AppResult<crate::commands::preview_util::CappedRead> {
+    use tokio::io::AsyncReadExt as _;
+
+    let sftp = open_sftp(session).await?;
+    let guard = sftp.lock().await;
+    let attrs = guard
+        .metadata(path)
+        .await
+        .map_err(|e| AppError::Sftp(format!("stat {path}: {e}")))?;
+    if attrs.is_dir() {
+        return Err(AppError::InvalidPath(format!("{path} is a directory")));
+    }
+    let size = attrs.size.unwrap_or(0);
+    let mtime = attrs.mtime.map(|m| m as u64);
+    let bytes = if size <= max {
+        let mut f = guard
+            .open_with_flags(path, OpenFlags::READ)
+            .await
+            .map_err(|e| AppError::Sftp(format!("open remote: {e}")))?;
+        let mut buf = Vec::with_capacity(size as usize);
+        f.read_to_end(&mut buf)
+            .await
+            .map_err(|e| AppError::Sftp(format!("read: {e}")))?;
+        Some(buf)
+    } else {
+        None
+    };
+    Ok(crate::commands::preview_util::CappedRead { bytes, size, mtime })
+}
+
 pub async fn download(
     session: &SshSession,
     remote_path: &str,

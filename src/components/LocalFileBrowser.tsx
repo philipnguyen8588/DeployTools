@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import {
   Folder,
   FileText,
@@ -26,6 +26,11 @@ import { useConfirm } from "./ConfirmDialog";
 import { runDeployJob, jumpToActivity } from "@/lib/deployJob";
 import { useProjects } from "@/stores/projects";
 import { findMatchingExcludes } from "@/lib/excludes";
+
+// Monaco-backed preview — lazy so its ~2 MB chunk loads on first use only.
+const FileViewerDialog = lazy(() =>
+  import("./FileViewerDialog").then((m) => ({ default: m.FileViewerDialog })),
+);
 
 interface Props {
   sessionId: string;
@@ -63,6 +68,7 @@ export function LocalFileBrowser({
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [compareFor, setCompareFor] = useState<string | null>(null);
   const [compareFolderFor, setCompareFolderFor] = useState<string | null>(null);
+  const [previewFor, setPreviewFor] = useState<LocalEntry | null>(null);
   const confirm = useConfirm();
   const { projects, save } = useProjects();
   const project = projectId ? projects.find((p) => p.id === projectId) : undefined;
@@ -296,6 +302,13 @@ export function LocalFileBrowser({
         onClick: () => void uploadChecked(),
       });
     }
+    if (!e.is_dir) {
+      items.push({
+        label: "Preview",
+        icon: <FileText className="h-3.5 w-3.5" />,
+        onClick: () => setPreviewFor(e),
+      });
+    }
     items.push({
       label: e.is_dir ? "Upload folder to server" : "Upload to server",
       icon: <Upload className="h-3.5 w-3.5" />,
@@ -459,7 +472,7 @@ export function LocalFileBrowser({
                 onClick={() => setSelection(e)}
                 onDoubleClick={() => {
                   if (e.is_dir) onRelativePathChange(e.relative_path);
-                  else void uploadEntry(e);
+                  else setPreviewFor(e);
                 }}
                 onContextMenu={(ev) => {
                   ev.preventDefault();
@@ -526,6 +539,17 @@ export function LocalFileBrowser({
           items={buildMenuItems(menu.entry)}
           onClose={() => setMenu(null)}
         />
+      )}
+
+      {previewFor && projectId && (
+        <Suspense fallback={null}>
+          <FileViewerDialog
+            fileName={previewFor.name}
+            pathLabel={absPath(previewFor.relative_path)}
+            load={() => api.readLocalText(projectId, previewFor.relative_path)}
+            onClose={() => setPreviewFor(null)}
+          />
+        </Suspense>
       )}
 
       {compareFor && projectId && (

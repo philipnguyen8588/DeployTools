@@ -10,6 +10,7 @@ pub mod groups;
 pub mod history;
 pub mod ide;
 pub mod metrics;
+pub mod preview_util;
 pub mod project;
 pub mod services;
 pub mod snippets;

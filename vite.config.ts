@@ -10,6 +10,9 @@ export default defineConfig(async () => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // monaco-editor's exports map only exposes "*.js" subpaths, which
+      // blocks direct CSS imports (codicon font). Alias around it.
+      "monaco-esm": path.resolve(__dirname, "./node_modules/monaco-editor/esm/vs"),
     },
   },
   // Vite options tailored for Tauri dev

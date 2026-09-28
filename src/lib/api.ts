@@ -29,6 +29,7 @@ import type {
   SessionSummary,
   Snippet,
   SysInfo,
+  TextFileContent,
   UUID,
   VaultStatus,
 } from "./types";
@@ -273,6 +274,10 @@ export const compareFolder = (
     relativePath,
     sessionId,
   });
+export const readLocalText = (projectId: UUID, relativePath: string) =>
+  invoke<TextFileContent>("read_local_text", { projectId, relativePath });
+export const readRemoteText = (sessionId: string, path: string) =>
+  invoke<TextFileContent>("sftp_read_text", { sessionId, path });
 
 // --- Snippets ---
 export const snippetList = () => invoke<Snippet[]>("snippet_list");
