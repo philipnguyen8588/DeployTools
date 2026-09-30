@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import {
   GitBranch,
   GitCommit as GitCommitIcon,
+  GitCompare,
   FileText,
+  FolderOpen,
+  Copy,
   RefreshCcw,
   Upload,
   CheckSquare,
@@ -15,8 +18,16 @@ import * as api from "@/lib/api";
 import type { GitCommit, GitFile, GitInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
+import { ContextMenu, type ContextMenuItem } from "./ui/context-menu";
+import { CompareDialog } from "./CompareDialog";
 import { useConfirm } from "./ConfirmDialog";
+import { useProjects } from "@/stores/projects";
 import { runDeployJob, jumpToActivity } from "@/lib/deployJob";
+
+// Monaco-backed preview — lazy so its ~2 MB chunk loads on first use only.
+const FileViewerDialog = lazy(() =>
+  import("./FileViewerDialog").then((m) => ({ default: m.FileViewerDialog })),
+);
 
 interface Props {
   projectId: string;
@@ -281,6 +292,8 @@ function ChangesView({
               })
             }
             remoteBase={remoteBase}
+            projectId={projectId}
+            sessionId={sessionId}
           />
         )}
       </div>
@@ -534,6 +547,8 @@ function CommitFilesView({
               })
             }
             remoteBase={remoteBase}
+            projectId={projectId}
+            sessionId={sessionId}
           />
         )}
       </div>
@@ -548,58 +563,197 @@ function FileList({
   selected,
   onToggle,
   remoteBase,
+  projectId,
+  sessionId,
 }: {
   files: GitFile[];
   selected: Set<string>;
   onToggle: (p: string) => void;
   remoteBase: string;
+  projectId: string;
+  sessionId: string;
 }) {
+  const [menu, setMenu] = useState<{ x: number; y: number; file: GitFile } | null>(
+    null,
+  );
+  const [previewFor, setPreviewFor] = useState<GitFile | null>(null);
+  const [compareFor, setCompareFor] = useState<string | null>(null);
+  const confirm = useConfirm();
+  // local_path is needed for "Copy absolute path" / reveal — same
+  // behavior as the Files browser's context menu.
+  const localBase = useProjects(
+    (s) => s.projects.find((p) => p.id === projectId)?.local_path ?? "",
+  );
+
+  function absPath(rel: string): string {
+    const sep = localBase.includes("\\") ? "\\" : "/";
+    const base = localBase.replace(/[\\/]+$/, "");
+    const relOs = sep === "\\" ? rel.replace(/\//g, "\\") : rel;
+    return relOs ? `${base}${sep}${relOs}` : base;
+  }
+
+  function revealLabel(): string {
+    const ua = navigator.userAgent;
+    if (/Mac/i.test(ua)) return "Show in Finder";
+    if (/Win/i.test(ua)) return "Show in Explorer";
+    return "Show in file manager";
+  }
+
+  async function uploadOne(f: GitFile) {
+    const mirror = remoteBase.replace(/\/+$/, "") + "/" + f.relative_path;
+    const ok = await confirm({
+      title: "Upload file to server?",
+      description: (
+        <div className="space-y-1.5">
+          <div>This will overwrite the remote copy if it exists.</div>
+          <div className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
+            {f.relative_path} → {mirror}
+          </div>
+        </div>
+      ),
+      confirmText: "Upload",
+    });
+    if (!ok) return;
+    await runDeployJob(`Uploading ${f.relative_path}`, async ({ jobId }) => {
+      const r = await api.deployFiles(projectId, [f.relative_path], sessionId, jobId);
+      if (r.failed.length > 0) {
+        jumpToActivity(sessionId);
+        return { text: `✗ Upload failed — see Activity`, warn: true as const };
+      }
+      return `✓ Uploaded ${f.relative_path}`;
+    });
+  }
+
+  function buildMenuItems(f: GitFile): ContextMenuItem[] {
+    return [
+      {
+        label: "Preview",
+        icon: <FileText className="h-3.5 w-3.5" />,
+        disabled: !f.exists_on_disk,
+        onClick: () => setPreviewFor(f),
+      },
+      {
+        label: "Upload to server",
+        icon: <Upload className="h-3.5 w-3.5" />,
+        disabled: !f.exists_on_disk,
+        onClick: () => void uploadOne(f),
+      },
+      {
+        label: "Compare with remote",
+        icon: <GitCompare className="h-3.5 w-3.5" />,
+        onClick: () => setCompareFor(f.relative_path),
+      },
+      { separator: true, label: "", onClick: () => {} },
+      {
+        label: revealLabel(),
+        icon: <FolderOpen className="h-3.5 w-3.5" />,
+        disabled: !f.exists_on_disk,
+        onClick: () => {
+          api.revealPath(absPath(f.relative_path)).catch((err) => {
+            toast.error(`${err}`);
+          });
+        },
+      },
+      {
+        label: "Copy absolute path",
+        icon: <Copy className="h-3.5 w-3.5" />,
+        onClick: () => {
+          void navigator.clipboard.writeText(absPath(f.relative_path));
+          toast.success("Copied");
+        },
+      },
+      {
+        label: "Copy relative path",
+        icon: <Copy className="h-3.5 w-3.5" />,
+        onClick: () => {
+          void navigator.clipboard.writeText(f.relative_path);
+          toast.success("Copied");
+        },
+      },
+    ];
+  }
+
   return (
-    <table className="w-full text-xs">
-      <tbody>
-        {files.map((f) => {
-          const checked = selected.has(f.relative_path);
-          return (
-            <tr
-              key={f.relative_path}
-              className={cn(
-                "cursor-pointer border-b hover:bg-accent",
-                checked && "bg-primary/5",
-                !f.exists_on_disk && "opacity-50",
-              )}
-              onClick={() => f.exists_on_disk && onToggle(f.relative_path)}
-              title={
-                f.exists_on_disk
-                  ? `Upload to ${remoteBase.replace(/\/+$/, "")}/${f.relative_path}`
-                  : "File no longer exists on disk — can't upload"
-              }
-            >
-              <td className="w-6 py-1 pl-3">
-                {checked ? (
-                  <CheckSquare className="h-3.5 w-3.5 text-primary" />
-                ) : (
-                  <Square className="h-3.5 w-3.5 text-muted-foreground" />
+    <>
+      <table className="w-full text-xs">
+        <tbody>
+          {files.map((f) => {
+            const checked = selected.has(f.relative_path);
+            return (
+              <tr
+                key={f.relative_path}
+                className={cn(
+                  "cursor-pointer border-b hover:bg-accent",
+                  checked && "bg-primary/5",
+                  !f.exists_on_disk && "opacity-50",
                 )}
-              </td>
-              <td className="w-14 py-1 text-center">
-                <StatusBadge code={f.status} />
-              </td>
-              <td className="px-2 py-1">
-                <span className="flex items-center gap-1.5">
-                  <FileText className="h-3 w-3 text-muted-foreground" />
-                  <span className="font-mono">{f.relative_path}</span>
-                  {!f.exists_on_disk && (
-                    <span className="ml-1 rounded bg-muted px-1 text-[10px] uppercase">
-                      deleted
-                    </span>
+                onClick={() => f.exists_on_disk && onToggle(f.relative_path)}
+                onContextMenu={(ev) => {
+                  ev.preventDefault();
+                  setMenu({ x: ev.clientX, y: ev.clientY, file: f });
+                }}
+                title={
+                  f.exists_on_disk
+                    ? `Upload to ${remoteBase.replace(/\/+$/, "")}/${f.relative_path}`
+                    : "File no longer exists on disk — can't upload"
+                }
+              >
+                <td className="w-6 py-1 pl-3">
+                  {checked ? (
+                    <CheckSquare className="h-3.5 w-3.5 text-primary" />
+                  ) : (
+                    <Square className="h-3.5 w-3.5 text-muted-foreground" />
                   )}
-                </span>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+                </td>
+                <td className="w-14 py-1 text-center">
+                  <StatusBadge code={f.status} />
+                </td>
+                <td className="px-2 py-1">
+                  <span className="flex items-center gap-1.5">
+                    <FileText className="h-3 w-3 text-muted-foreground" />
+                    <span className="font-mono">{f.relative_path}</span>
+                    {!f.exists_on_disk && (
+                      <span className="ml-1 rounded bg-muted px-1 text-[10px] uppercase">
+                        deleted
+                      </span>
+                    )}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={buildMenuItems(menu.file)}
+          onClose={() => setMenu(null)}
+        />
+      )}
+
+      {previewFor && (
+        <Suspense fallback={null}>
+          <FileViewerDialog
+            fileName={previewFor.relative_path.split("/").pop() ?? previewFor.relative_path}
+            pathLabel={absPath(previewFor.relative_path)}
+            load={() => api.readLocalText(projectId, previewFor.relative_path)}
+            onClose={() => setPreviewFor(null)}
+          />
+        </Suspense>
+      )}
+
+      {compareFor !== null && (
+        <CompareDialog
+          projectId={projectId}
+          relativePath={compareFor}
+          sessionId={sessionId}
+          onClose={() => setCompareFor(null)}
+        />
+      )}
+    </>
   );
 }
 
