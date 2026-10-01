@@ -97,6 +97,11 @@ export default function App() {
   useEffect(() => {
     document.documentElement.style.fontSize = `${uiFontSize}px`;
   }, [uiFontSize]);
+  // Register user-imported terminal fonts (FontFace) before any terminal
+  // opens, so a custom family measures correctly on first paint.
+  useEffect(() => {
+    void import("./lib/fonts").then((m) => m.ensureFontsLoaded());
+  }, []);
   const { tabs, activeId } = useSessions();
   // Reflect MCP-driven sessions in the UI (open/drop tabs).
   useMcpBridge();

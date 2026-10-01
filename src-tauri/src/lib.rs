@@ -131,6 +131,11 @@ pub fn run() {
             commands::deploy::compare_file,
             commands::deploy::compare_folder,
             commands::deploy::read_local_text,
+            // User-imported terminal fonts
+            commands::fonts::font_list,
+            commands::fonts::font_import,
+            commands::fonts::font_remove,
+            commands::fonts::font_read,
             // Git
             commands::git::git_info,
             commands::git::git_status,

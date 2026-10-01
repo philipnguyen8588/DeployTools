@@ -11,6 +11,7 @@ import type {
   DiskUsage,
   DockerAction,
   DockerInfo,
+  FontEntry,
   Metrics,
   FileComparison,
   FolderCompareResult,
@@ -278,6 +279,15 @@ export const readLocalText = (projectId: UUID, relativePath: string) =>
   invoke<TextFileContent>("read_local_text", { projectId, relativePath });
 export const readRemoteText = (sessionId: string, path: string) =>
   invoke<TextFileContent>("sftp_read_text", { sessionId, path });
+
+// --- User-imported terminal fonts ---
+export const fontList = () => invoke<FontEntry[]>("font_list");
+export const fontImport = (path: string) =>
+  invoke<FontEntry>("font_import", { path });
+export const fontRemove = (fileName: string) =>
+  invoke<void>("font_remove", { fileName });
+export const fontRead = (fileName: string) =>
+  invoke<string>("font_read", { fileName });
 
 // --- Snippets ---
 export const snippetList = () => invoke<Snippet[]>("snippet_list");

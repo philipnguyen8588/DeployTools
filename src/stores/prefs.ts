@@ -40,6 +40,15 @@ interface PrefsState {
    *  drives the html root font-size — so every rem-based Tailwind class
    *  scales — and the integrated terminal's font, keeping them in sync. */
   uiFontSize: number;
+  /** Terminal font family. null = bundled default (JetBrains Mono).
+   *  Otherwise a family name derived from user-imported font files. */
+  termFontFamily: string | null;
+  /** Terminal body weight (bold text always renders at 700). */
+  termFontWeight: number;
+  /** Terminal font size in px. null = auto (80% of uiFontSize). */
+  termFontSize: number | null;
+  /** Terminal line height multiplier. */
+  termLineHeight: number;
 
   setBannerEnabled: (v: boolean) => void;
   setHighlightEnabled: (v: boolean) => void;
@@ -47,12 +56,24 @@ interface PrefsState {
   setKeywords: (list: string[]) => void;
   setTerminalTheme: (name: TerminalThemeChoice) => void;
   setUiFontSize: (px: number) => void;
+  setTermFontFamily: (family: string | null) => void;
+  setTermFontWeight: (w: number) => void;
+  setTermFontSize: (px: number | null) => void;
+  setTermLineHeight: (lh: number) => void;
 }
 
 /** Allowed app font-size range (px) and default. */
 export const FONT_SIZE_MIN = 12;
 export const FONT_SIZE_MAX = 20;
 export const FONT_SIZE_DEFAULT = 15;
+
+/** Terminal-specific font knobs. */
+export const TERM_FONT_SIZE_MIN = 8;
+export const TERM_FONT_SIZE_MAX = 24;
+export const TERM_FONT_WEIGHT_DEFAULT = 300;
+export const TERM_LINE_HEIGHT_MIN = 1.0;
+export const TERM_LINE_HEIGHT_MAX = 1.8;
+export const TERM_LINE_HEIGHT_DEFAULT = 1.2;
 
 export type { TerminalThemeEntry };
 
@@ -64,6 +85,10 @@ export const usePrefs = create<PrefsState>()(
       highlightKeywords: DEFAULT_HIGHLIGHT_KEYWORDS,
       terminalTheme: "auto",
       uiFontSize: FONT_SIZE_DEFAULT,
+      termFontFamily: null,
+      termFontWeight: TERM_FONT_WEIGHT_DEFAULT,
+      termFontSize: null,
+      termLineHeight: TERM_LINE_HEIGHT_DEFAULT,
 
       setBannerEnabled: (v) => set({ bannerEnabled: v }),
       setHighlightEnabled: (v) => set({ highlightEnabled: v }),
@@ -76,6 +101,25 @@ export const usePrefs = create<PrefsState>()(
           uiFontSize: Math.max(
             FONT_SIZE_MIN,
             Math.min(FONT_SIZE_MAX, Math.round(px)),
+          ),
+        }),
+      setTermFontFamily: (family) => set({ termFontFamily: family }),
+      setTermFontWeight: (w) => set({ termFontWeight: w }),
+      setTermFontSize: (px) =>
+        set({
+          termFontSize:
+            px == null
+              ? null
+              : Math.max(
+                  TERM_FONT_SIZE_MIN,
+                  Math.min(TERM_FONT_SIZE_MAX, Math.round(px)),
+                ),
+        }),
+      setTermLineHeight: (lh) =>
+        set({
+          termLineHeight: Math.max(
+            TERM_LINE_HEIGHT_MIN,
+            Math.min(TERM_LINE_HEIGHT_MAX, Math.round(lh * 20) / 20),
           ),
         }),
     }),

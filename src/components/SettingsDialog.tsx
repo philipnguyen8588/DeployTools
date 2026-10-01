@@ -18,17 +18,28 @@ import {
   Type,
   Minus,
   Plus,
+  FileUp,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import * as api from "@/lib/api";
+import type { FontEntry } from "@/lib/types";
+import { ensureFontsLoaded, familiesOf, parseFontMeta } from "@/lib/fonts";
+import { formatBytes } from "@/lib/utils";
 import {
   usePrefs,
   DEFAULT_HIGHLIGHT_KEYWORDS,
   FONT_SIZE_MIN,
   FONT_SIZE_MAX,
   FONT_SIZE_DEFAULT,
+  TERM_FONT_SIZE_MIN,
+  TERM_FONT_SIZE_MAX,
+  TERM_LINE_HEIGHT_MIN,
+  TERM_LINE_HEIGHT_MAX,
+  TERM_LINE_HEIGHT_DEFAULT,
+  TERM_FONT_WEIGHT_DEFAULT,
 } from "@/stores/prefs";
 import {
   Dialog,
@@ -75,6 +86,71 @@ export function SettingsDialog({ onClose }: Props) {
   );
   const uiFontSize = usePrefs((s) => s.uiFontSize);
   const setUiFontSize = usePrefs((s) => s.setUiFontSize);
+
+  // Terminal-specific font prefs + the imported-font library.
+  const termFontFamily = usePrefs((s) => s.termFontFamily);
+  const setTermFontFamily = usePrefs((s) => s.setTermFontFamily);
+  const termFontWeight = usePrefs((s) => s.termFontWeight);
+  const setTermFontWeight = usePrefs((s) => s.setTermFontWeight);
+  const termFontSize = usePrefs((s) => s.termFontSize);
+  const setTermFontSize = usePrefs((s) => s.setTermFontSize);
+  const termLineHeight = usePrefs((s) => s.termLineHeight);
+  const setTermLineHeight = usePrefs((s) => s.setTermLineHeight);
+  const [fonts, setFonts] = useState<FontEntry[]>([]);
+
+  useEffect(() => {
+    void ensureFontsLoaded()
+      .then(setFonts)
+      .catch((e) => toast.error(`${e}`));
+  }, []);
+
+  /** Auto terminal size = 80% of the UI knob (same rule as Terminal.tsx). */
+  const autoTermSize = Math.round(Math.max(10, uiFontSize * 0.8));
+
+  async function importFonts() {
+    const picked = await openDialog({
+      title: "Import font files",
+      multiple: true,
+      filters: [{ name: "Fonts", extensions: ["ttf", "otf", "woff", "woff2"] }],
+    });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    let ok = 0;
+    for (const p of paths) {
+      try {
+        await api.fontImport(p);
+        ok++;
+      } catch (e) {
+        toast.error(`${e}`);
+      }
+    }
+    if (ok > 0) {
+      const entries = await ensureFontsLoaded();
+      setFonts(entries);
+      toast.success(
+        `Imported ${ok} font file${ok > 1 ? "s" : ""} — copied into the app's fonts folder`,
+      );
+    }
+  }
+
+  async function removeFont(fileName: string) {
+    try {
+      await api.fontRemove(fileName);
+      const next = fonts.filter((f) => f.file_name !== fileName);
+      setFonts(next);
+      // If the selected family just lost its last file, fall back to the
+      // bundled default. (Already-registered FontFaces stay until app
+      // restart; the pref is what matters.)
+      if (
+        termFontFamily &&
+        !familiesOf(next).includes(termFontFamily)
+      ) {
+        setTermFontFamily(null);
+      }
+    } catch (e) {
+      toast.error(`${e}`);
+    }
+  }
 
   async function loadActivity() {
     try {
@@ -494,6 +570,197 @@ export function SettingsDialog({ onClose }: Props) {
                   </Button>
                 )}
               </div>
+            </div>
+
+            {/* Terminal font — independent from the app-wide knob. Custom
+                families come from user-imported files stored next to the
+                vault (fonts/) so the usual backup covers them. */}
+            <div className="space-y-2 border-t pt-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Type className="h-4 w-4 text-primary" />
+                Terminal font
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Only affects the terminal. Import your own font files
+                (.ttf/.otf/.woff2) — e.g. SF Mono from your Mac — and they
+                are copied into the app's <code>fonts/</code> folder beside
+                the vault for easy backup. Name files like
+                <code className="mx-1">Family-Regular.otf</code>,
+                <code>Family-Bold.otf</code> to get proper bold/italic.
+              </p>
+
+              {/* Family + weight */}
+              <div className="flex flex-wrap items-center gap-2">
+                <Label className="text-[11px] text-muted-foreground">
+                  Family
+                </Label>
+                <select
+                  className="h-7 rounded border bg-background px-2 text-xs"
+                  value={termFontFamily ?? ""}
+                  onChange={(e) =>
+                    setTermFontFamily(e.target.value === "" ? null : e.target.value)
+                  }
+                >
+                  <option value="">JetBrains Mono (bundled)</option>
+                  {familiesOf(fonts).map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+                <Label className="text-[11px] text-muted-foreground">
+                  Weight
+                </Label>
+                <select
+                  className="h-7 rounded border bg-background px-2 text-xs"
+                  value={termFontWeight}
+                  onChange={(e) => setTermFontWeight(Number(e.target.value))}
+                >
+                  <option value={100}>Thin 100</option>
+                  <option value={200}>ExtraLight 200</option>
+                  <option value={300}>Light 300</option>
+                  <option value={400}>Regular 400</option>
+                  <option value={500}>Medium 500</option>
+                  <option value={600}>SemiBold 600</option>
+                  <option value={700}>Bold 700</option>
+                </select>
+                {(termFontFamily !== null ||
+                  termFontWeight !== TERM_FONT_WEIGHT_DEFAULT) && (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => {
+                      setTermFontFamily(null);
+                      setTermFontWeight(TERM_FONT_WEIGHT_DEFAULT);
+                    }}
+                    title="Back to bundled JetBrains Mono Light"
+                  >
+                    Reset
+                  </Button>
+                )}
+              </div>
+
+              {/* Size — auto (follows app font size) or explicit px */}
+              <div className="flex items-center gap-2">
+                <Label className="text-[11px] text-muted-foreground">Size</Label>
+                <Button
+                  size="xs"
+                  variant={termFontSize == null ? "default" : "outline"}
+                  onClick={() => setTermFontSize(null)}
+                  title="Follow the app font size (80%)"
+                >
+                  Auto ({autoTermSize}px)
+                </Button>
+                <Button
+                  size="icon-sm"
+                  variant="outline"
+                  disabled={(termFontSize ?? autoTermSize) <= TERM_FONT_SIZE_MIN}
+                  onClick={() =>
+                    setTermFontSize((termFontSize ?? autoTermSize) - 1)
+                  }
+                  title="Smaller"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </Button>
+                <span className="w-12 text-center text-sm font-medium tabular-nums">
+                  {termFontSize ?? autoTermSize}px
+                </span>
+                <Button
+                  size="icon-sm"
+                  variant="outline"
+                  disabled={(termFontSize ?? autoTermSize) >= TERM_FONT_SIZE_MAX}
+                  onClick={() =>
+                    setTermFontSize((termFontSize ?? autoTermSize) + 1)
+                  }
+                  title="Larger"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+                <Label className="ml-3 text-[11px] text-muted-foreground">
+                  Line height
+                </Label>
+                <input
+                  type="range"
+                  min={TERM_LINE_HEIGHT_MIN}
+                  max={TERM_LINE_HEIGHT_MAX}
+                  step={0.05}
+                  value={termLineHeight}
+                  onChange={(e) => setTermLineHeight(Number(e.target.value))}
+                  className="w-28 accent-primary"
+                  aria-label="Terminal line height"
+                />
+                <span className="w-10 text-center text-xs tabular-nums">
+                  {termLineHeight.toFixed(2)}
+                </span>
+                {termLineHeight !== TERM_LINE_HEIGHT_DEFAULT && (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => setTermLineHeight(TERM_LINE_HEIGHT_DEFAULT)}
+                    title={`Reset to ${TERM_LINE_HEIGHT_DEFAULT}`}
+                  >
+                    Reset
+                  </Button>
+                )}
+              </div>
+
+              {/* Live sample in the exact font the terminal will use. */}
+              <div
+                className="rounded border bg-muted/30 px-3 py-2"
+                style={{
+                  fontFamily: `"${termFontFamily ?? "JetBrains Mono"}", "JetBrains Mono", ui-monospace, monospace`,
+                  fontWeight: termFontWeight,
+                  fontSize: `${termFontSize ?? autoTermSize}px`,
+                  lineHeight: termLineHeight,
+                }}
+              >
+                user@server:~$ ls -la | grep 0O1lI — <b>bold</b> <i>italic</i>
+              </div>
+
+              {/* Imported files */}
+              <div className="flex items-center gap-2">
+                <Button size="xs" variant="outline" onClick={() => void importFonts()}>
+                  <FileUp className="h-3.5 w-3.5" />
+                  Import font…
+                </Button>
+                <span className="text-[11px] text-muted-foreground">
+                  {fonts.length === 0
+                    ? "No imported fonts yet"
+                    : `${fonts.length} file${fonts.length > 1 ? "s" : ""} in fonts/`}
+                </span>
+              </div>
+              {fonts.length > 0 && (
+                <div className="space-y-1">
+                  {fonts.map((f) => {
+                    const meta = parseFontMeta(f.file_name);
+                    return (
+                      <div
+                        key={f.file_name}
+                        className="flex items-center gap-2 rounded border bg-muted/20 px-2 py-1 text-xs"
+                      >
+                        <span className="min-w-0 flex-1 truncate font-mono">
+                          {f.file_name}
+                        </span>
+                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                          {meta.family} · {meta.weight}
+                          {meta.style === "italic" ? " · italic" : ""}
+                        </span>
+                        <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                          {formatBytes(f.size)}
+                        </span>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          onClick={() => void removeFont(f.file_name)}
+                          title="Remove from fonts folder"
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Terminal appearance — MobaXterm-style banner + colorization.

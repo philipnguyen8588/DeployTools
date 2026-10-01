@@ -5,6 +5,7 @@
 pub mod cloudflare;
 pub mod deploy;
 pub mod docker;
+pub mod fonts;
 pub mod git;
 pub mod groups;
 pub mod history;

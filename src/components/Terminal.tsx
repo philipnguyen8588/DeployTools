@@ -121,6 +121,27 @@ function terminalFontSize(uiFontSize: number): number {
   return Math.max(10, uiFontSize * 0.8);
 }
 
+/** Bundled default stack — JetBrains Mono ships with the app (see
+ *  @font-face in index.css); the system faces are first-frame fallbacks. */
+const DEFAULT_TERM_FONT_STACK =
+  '"JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace';
+
+/** Full font-family string: user-imported family first (when set), then
+ *  the bundled stack so missing glyphs/weights still render. */
+function terminalFontFamily(custom: string | null): string {
+  return custom
+    ? `"${custom}", ${DEFAULT_TERM_FONT_STACK}`
+    : DEFAULT_TERM_FONT_STACK;
+}
+
+/** Effective px size: explicit terminal override, else 80% of the UI knob. */
+function resolvedTermFontSize(
+  termFontSize: number | null,
+  uiFontSize: number,
+): number {
+  return termFontSize ?? terminalFontSize(uiFontSize);
+}
+
 /** Per-session cache of the banner's system-info probe, so opening a
  *  second terminal tab reuses it instead of re-running the SSH exec.
  *  Keyed by session id (a reconnect mints a fresh id → fresh probe). */
@@ -237,8 +258,14 @@ export function Terminal({
   // dialog recolors every open terminal at once.
   const terminalTheme = usePrefs((s) => s.terminalTheme);
   // App-wide font size — the terminal shares the same knob as the UI so
-  // text size stays in sync everywhere.
+  // text size stays in sync everywhere (unless overridden below).
   const uiFontSize = usePrefs((s) => s.uiFontSize);
+  // Terminal-specific font knobs (Settings → Terminal font). All applied
+  // live to every open terminal.
+  const termFontFamily = usePrefs((s) => s.termFontFamily);
+  const termFontWeight = usePrefs((s) => s.termFontWeight);
+  const termFontSize = usePrefs((s) => s.termFontSize);
+  const termLineHeight = usePrefs((s) => s.termLineHeight);
 
   // Keep the latest server-output callback in a ref so the listen
   // callback (set up once at mount) always calls the most recent
@@ -308,14 +335,17 @@ export function Terminal({
     highlighterRef.current?.setLight(isLightColor(theme.background));
   }, [resolvedTheme, terminalTheme]);
 
-  // Live font-size: follow the app-wide knob, then refit so the PTY grid
-  // matches the new cell size.
+  // Live font updates: size/family/weight/line-height from Settings,
+  // then refit so the PTY grid matches the new cell metrics.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.fontSize = terminalFontSize(uiFontSize);
+    term.options.fontSize = resolvedTermFontSize(termFontSize, uiFontSize);
+    term.options.fontFamily = terminalFontFamily(termFontFamily);
+    term.options.fontWeight = termFontWeight;
+    term.options.lineHeight = termLineHeight;
     fitRef.current?.fit();
-  }, [uiFontSize]);
+  }, [uiFontSize, termFontSize, termFontFamily, termFontWeight, termLineHeight]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -323,24 +353,19 @@ export function Terminal({
     let unlistenExit: UnlistenFn | null = null;
     let disposed = false;
 
+    // Font prefs at creation time; later changes are applied live by the
+    // effect above. Default family is the bundled JetBrains Mono (Light
+    // 300 — the WebGL renderer draws glyphs heavier than the DOM, so 300
+    // visually matches the antialiased 400 of the Activity console); the
+    // user can point this at any imported family from Settings. (SF Mono
+    // itself can't be bundled — Apple license forbids redistribution —
+    // but an imported copy of the user's own is fine.)
+    const fontPrefs = usePrefs.getState();
     const term = new XTerm({
-      // JetBrains Mono is BUNDLED (see @font-face in index.css) so every
-      // machine renders the terminal with identical font metrics — no more
-      // SF Mono (mac) vs Cascadia/Consolas (Windows) size drift. The
-      // system faces remain as fallbacks only for the first frames before
-      // the woff2 is parsed. (SF Mono itself can't be bundled — Apple
-      // license forbids redistribution, and this app ships publicly.)
-      fontFamily:
-        '"JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, ui-monospace, monospace',
-      fontSize: terminalFontSize(usePrefs.getState().uiFontSize),
-      // Light (300) face — the WebGL renderer draws glyphs heavier than
-      // the DOM (no font-smoothing), so 300 here visually matches the
-      // antialiased 400 used by the Activity console. Static face is
-      // bundled (see index.css); ask for exactly 300 so no platform
-      // synthesizes a different weight.
-      fontWeight: 300,
-      // SF Mono's roomy vertical rhythm — Terminal.app spacing.
-      lineHeight: 1.2,
+      fontFamily: terminalFontFamily(fontPrefs.termFontFamily),
+      fontSize: resolvedTermFontSize(fontPrefs.termFontSize, fontPrefs.uiFontSize),
+      fontWeight: fontPrefs.termFontWeight,
+      lineHeight: fontPrefs.termLineHeight,
       // Terminal.app default: steady block cursor (blink is off).
       cursorStyle: "block",
       cursorBlink: false,
@@ -370,12 +395,18 @@ export function Terminal({
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(containerRef.current);
-    // xterm measures glyph metrics at open(). If the bundled JetBrains
-    // Mono woff2 hasn't finished parsing yet, it measures the fallback
-    // face instead — so once the font is ready, poke the option to force
-    // a re-measure and refit. No-op when the font was already cached.
+    // xterm measures glyph metrics at open(). If the configured face
+    // (bundled woff2 or an imported FontFace) hasn't finished parsing
+    // yet, it measures the fallback instead — so once the font is ready,
+    // poke the option to force a re-measure and refit. No-op when the
+    // font was already cached.
     void document.fonts
-      .load(`300 ${terminalFontSize(usePrefs.getState().uiFontSize)}px "JetBrains Mono"`)
+      .load(
+        `${fontPrefs.termFontWeight} ${resolvedTermFontSize(
+          fontPrefs.termFontSize,
+          fontPrefs.uiFontSize,
+        )}px "${fontPrefs.termFontFamily ?? "JetBrains Mono"}"`,
+      )
       .then(() => {
         if (termRef.current === term) {
           const fam = term.options.fontFamily;

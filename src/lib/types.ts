@@ -146,6 +146,12 @@ export interface ProgressEvent {
   total: number;
 }
 
+/** A user-imported font file stored in the app's fonts dir. */
+export interface FontEntry {
+  file_name: string;
+  size: number;
+}
+
 /** Read-only file preview payload (read_local_text / sftp_read_text). */
 export interface TextFileContent {
   /** null when the file is binary, too large, or not valid UTF-8. */
