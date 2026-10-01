@@ -286,6 +286,8 @@ export const fontImport = (path: string) =>
   invoke<FontEntry>("font_import", { path });
 export const fontRemove = (fileName: string) =>
   invoke<void>("font_remove", { fileName });
+export const fontDownload = (url: string, fileName: string) =>
+  invoke<FontEntry>("font_download", { url, fileName });
 export const fontRead = (fileName: string) =>
   invoke<string>("font_read", { fileName });
 

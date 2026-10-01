@@ -134,6 +134,7 @@ pub fn run() {
             // User-imported terminal fonts
             commands::fonts::font_list,
             commands::fonts::font_import,
+            commands::fonts::font_download,
             commands::fonts::font_remove,
             commands::fonts::font_read,
             // Git
