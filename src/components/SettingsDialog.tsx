@@ -26,13 +26,8 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import * as api from "@/lib/api";
 import type { FontEntry } from "@/lib/types";
-import {
-  FONT_CATALOG,
-  downloadCatalogFont,
-  ensureFontsLoaded,
-  familiesOf,
-  parseFontMeta,
-} from "@/lib/fonts";
+import { ensureFontsLoaded, familiesOf, parseFontMeta } from "@/lib/fonts";
+import { BUNDLED_TERM_FONTS } from "@/lib/fonts-bundled";
 import { formatBytes } from "@/lib/utils";
 import {
   usePrefs,
@@ -103,8 +98,6 @@ export function SettingsDialog({ onClose }: Props) {
   const termLineHeight = usePrefs((s) => s.termLineHeight);
   const setTermLineHeight = usePrefs((s) => s.setTermLineHeight);
   const [fonts, setFonts] = useState<FontEntry[]>([]);
-  const [catalogPick, setCatalogPick] = useState("");
-  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     void ensureFontsLoaded()
@@ -138,25 +131,6 @@ export function SettingsDialog({ onClose }: Props) {
       toast.success(
         `Imported ${ok} font file${ok > 1 ? "s" : ""} — copied into the app's fonts folder`,
       );
-    }
-  }
-
-  async function downloadFromCatalog() {
-    const font = FONT_CATALOG.find((f) => f.family === catalogPick);
-    if (!font) return;
-    setDownloading(true);
-    try {
-      const entries = await downloadCatalogFont(font);
-      setFonts(entries);
-      // Switch the terminal to the new family right away — that's why
-      // the user downloaded it.
-      setTermFontFamily(font.family);
-      setCatalogPick("");
-      toast.success(`${font.label} downloaded into fonts/ and selected`);
-    } catch (e) {
-      toast.error(`${e}`);
-    } finally {
-      setDownloading(false);
     }
   }
 
@@ -628,12 +602,23 @@ export function SettingsDialog({ onClose }: Props) {
                     setTermFontFamily(e.target.value === "" ? null : e.target.value)
                   }
                 >
-                  <option value="">JetBrains Mono (bundled)</option>
-                  {familiesOf(fonts).map((f) => (
-                    <option key={f} value={f}>
-                      {f}
-                    </option>
-                  ))}
+                  <option value="">JetBrains Mono (default)</option>
+                  <optgroup label="Bundled free fonts">
+                    {BUNDLED_TERM_FONTS.map((f) => (
+                      <option key={f.family} value={f.family}>
+                        {f.family} — {f.note}
+                      </option>
+                    ))}
+                  </optgroup>
+                  {familiesOf(fonts).length > 0 && (
+                    <optgroup label="Imported">
+                      {familiesOf(fonts).map((f) => (
+                        <option key={f} value={f}>
+                          {f}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
                 <Label className="text-[11px] text-muted-foreground">
                   Weight
@@ -742,40 +727,6 @@ export function SettingsDialog({ onClose }: Props) {
                 }}
               >
                 user@server:~$ ls -la | grep 0O1lI — <b>bold</b> <i>italic</i>
-              </div>
-
-              {/* Free font catalog — OFL fonts fetched from the Fontsource
-                  CDN into fonts/, same pipeline as manual imports. */}
-              <div className="flex flex-wrap items-center gap-2">
-                <Label className="text-[11px] text-muted-foreground">
-                  Free fonts
-                </Label>
-                <select
-                  className="h-7 min-w-0 flex-1 rounded border bg-background px-2 text-xs"
-                  value={catalogPick}
-                  onChange={(e) => setCatalogPick(e.target.value)}
-                  disabled={downloading}
-                >
-                  <option value="">Pick a free terminal font…</option>
-                  {FONT_CATALOG.map((f) => {
-                    const installed = familiesOf(fonts).includes(f.family);
-                    return (
-                      <option key={f.family} value={f.family}>
-                        {f.label}
-                        {f.note ? ` — ${f.note}` : ""}
-                        {installed ? " ✓" : ""}
-                      </option>
-                    );
-                  })}
-                </select>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={!catalogPick || downloading}
-                  onClick={() => void downloadFromCatalog()}
-                >
-                  {downloading ? "Downloading…" : "Download"}
-                </Button>
               </div>
 
               {/* Imported files */}

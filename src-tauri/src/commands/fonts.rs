@@ -102,53 +102,6 @@ pub async fn font_import(path: PathBuf, app: tauri::AppHandle) -> AppResult<Font
     })
 }
 
-/// Download a catalog font face into the fonts dir. Locked to the
-/// Fontsource CDN — this is driven by the app's built-in free-font
-/// catalog, never arbitrary user URLs.
-#[tauri::command]
-pub async fn font_download(
-    url: String,
-    file_name: String,
-    app: tauri::AppHandle,
-) -> AppResult<FontEntry> {
-    validate_file_name(&file_name)?;
-    if !has_allowed_ext(&file_name) {
-        return Err(AppError::InvalidPath(
-            "unsupported font type — use .ttf, .otf, .woff or .woff2".into(),
-        ));
-    }
-    if !url.starts_with("https://cdn.jsdelivr.net/") {
-        return Err(AppError::Other(
-            "font downloads are restricted to cdn.jsdelivr.net".into(),
-        ));
-    }
-    let resp = reqwest::get(&url)
-        .await
-        .map_err(|e| AppError::Other(format!("download: {e}")))?;
-    if !resp.status().is_success() {
-        return Err(AppError::Other(format!(
-            "download failed: HTTP {} for {url}",
-            resp.status()
-        )));
-    }
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| AppError::Other(format!("download body: {e}")))?;
-    if bytes.len() as u64 > MAX_FONT_BYTES {
-        return Err(AppError::Other("font file too large".into()));
-    }
-    let dir = fonts_dir(&app);
-    tokio::fs::create_dir_all(&dir).await?;
-    let dest = dir.join(&file_name);
-    tokio::fs::write(&dest, &bytes).await?;
-    tracing::info!(target: "fonts", "downloaded {url} -> {}", dest.display());
-    Ok(FontEntry {
-        file_name,
-        size: bytes.len() as u64,
-    })
-}
-
 #[tauri::command]
 pub async fn font_remove(file_name: String, app: tauri::AppHandle) -> AppResult<()> {
     validate_file_name(&file_name)?;

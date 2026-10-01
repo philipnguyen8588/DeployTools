@@ -9,6 +9,9 @@ import { ConfirmProvider } from "./components/ConfirmDialog";
 // Francisco, so the UI reads like macOS on Windows too. Bundled locally
 // so it works offline in the Tauri webview (no CDN / CSP issues).
 import "@fontsource-variable/inter";
+// Bundled free terminal fonts — @font-face registration only; the woff2
+// payloads load lazily when a family is first used (see fonts-bundled.ts).
+import "./lib/fonts-bundled";
 import "./index.css";
 import "@xterm/xterm/css/xterm.css";
 
