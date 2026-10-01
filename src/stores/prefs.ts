@@ -107,12 +107,14 @@ export const usePrefs = create<PrefsState>()(
       setTermFontWeight: (w) => set({ termFontWeight: w }),
       setTermFontSize: (px) =>
         set({
+          // Half-pixel steps (10.5, 11, 11.5…) — fractional sizes are
+          // fine for canvas/WebGL glyph rendering and give finer control.
           termFontSize:
             px == null
               ? null
               : Math.max(
                   TERM_FONT_SIZE_MIN,
-                  Math.min(TERM_FONT_SIZE_MAX, Math.round(px)),
+                  Math.min(TERM_FONT_SIZE_MAX, Math.round(px * 2) / 2),
                 ),
         }),
       setTermLineHeight: (lh) =>

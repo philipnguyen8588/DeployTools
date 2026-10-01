@@ -113,7 +113,7 @@ export function SettingsDialog({ onClose }: Props) {
   }, []);
 
   /** Auto terminal size = 80% of the UI knob (same rule as Terminal.tsx). */
-  const autoTermSize = Math.round(Math.max(10, uiFontSize * 0.8));
+  const autoTermSize = Math.round(Math.max(10, uiFontSize * 0.8) * 2) / 2;
 
   async function importFonts() {
     const picked = await openDialog({
@@ -683,13 +683,13 @@ export function SettingsDialog({ onClose }: Props) {
                   variant="outline"
                   disabled={(termFontSize ?? autoTermSize) <= TERM_FONT_SIZE_MIN}
                   onClick={() =>
-                    setTermFontSize((termFontSize ?? autoTermSize) - 1)
+                    setTermFontSize((termFontSize ?? autoTermSize) - 0.5)
                   }
-                  title="Smaller"
+                  title="Smaller (−0.5)"
                 >
                   <Minus className="h-3.5 w-3.5" />
                 </Button>
-                <span className="w-12 text-center text-sm font-medium tabular-nums">
+                <span className="w-14 text-center text-sm font-medium tabular-nums">
                   {termFontSize ?? autoTermSize}px
                 </span>
                 <Button
@@ -697,9 +697,9 @@ export function SettingsDialog({ onClose }: Props) {
                   variant="outline"
                   disabled={(termFontSize ?? autoTermSize) >= TERM_FONT_SIZE_MAX}
                   onClick={() =>
-                    setTermFontSize((termFontSize ?? autoTermSize) + 1)
+                    setTermFontSize((termFontSize ?? autoTermSize) + 0.5)
                   }
-                  title="Larger"
+                  title="Larger (+0.5)"
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </Button>
