@@ -122,17 +122,33 @@ async fn open_sftp_channel(
         .request_subsystem(true, "sftp")
         .await
         .map_err(|e| AppError::Ssh(format!("request sftp: {e}")))?;
-    match tokio::time::timeout(SFTP_INIT_TIMEOUT, channel.wait()).await {
-        Ok(Some(russh::ChannelMsg::Success)) => Ok(channel),
-        Ok(Some(russh::ChannelMsg::Failure)) => {
+    // Wait for the server's reply to the subsystem request. A compliant
+    // server sends CHANNEL_SUCCESS (→ `ChannelMsg::Success`) before any SFTP
+    // I/O, or CHANNEL_FAILURE (→ `Failure`) if it has no SFTP. Loop past any
+    // benign informational message (e.g. `WindowAdjusted`) that may arrive
+    // first — only `Success` and a definitive close/failure are conclusive.
+    // We must NOT build the SFTP stream before seeing `Success`: on a
+    // rejected channel, russh's `ChannelStream` busy-loops on the failure
+    // message and pegs the CPU (detached, survives dropping the session).
+    let started = tokio::time::timeout(SFTP_INIT_TIMEOUT, async {
+        loop {
+            match channel.wait().await {
+                Some(russh::ChannelMsg::Success) => return true,
+                Some(russh::ChannelMsg::Failure)
+                | Some(russh::ChannelMsg::Eof)
+                | Some(russh::ChannelMsg::Close)
+                | None => return false,
+                Some(_) => {}
+            }
+        }
+    })
+    .await;
+    match started {
+        Ok(true) => Ok(channel),
+        Ok(false) => {
             let _ = channel.close().await;
             Err(mark_sftp_unavailable(session, "subsystem rejected"))
         }
-        Ok(Some(_)) => {
-            let _ = channel.close().await;
-            Err(mark_sftp_unavailable(session, "unexpected subsystem reply"))
-        }
-        Ok(None) => Err(mark_sftp_unavailable(session, "channel closed")),
         Err(_) => {
             let _ = channel.close().await;
             Err(mark_sftp_unavailable(session, "subsystem request timed out"))
