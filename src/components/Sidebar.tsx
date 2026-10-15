@@ -51,6 +51,7 @@ import * as api from "@/lib/api";
 import { ServerDialog } from "./ServerDialog";
 import { ProjectDialog } from "./ProjectDialog";
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
+import { useConfirm } from "./ConfirmDialog";
 import { ContextMenu, type ContextMenuItem } from "./ui/context-menu";
 import { cn } from "@/lib/utils";
 import type {
@@ -111,6 +112,7 @@ export function Sidebar() {
   const [deletingServer, setDeletingServer] = useState<ServerSummary | null>(null);
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const confirm = useConfirm();
 
   /** Search query — matches against server name/host/user and project name.
    *  Empty string = show everything (and re-enables drag reorder).
@@ -315,22 +317,67 @@ export function Sidebar() {
 
   // ----- Actions -----
 
+  async function doOpen(server: ServerSummary, project?: Project) {
+    const summary = await api.openSession(server.id, project?.id);
+    openTab({
+      session: summary,
+      label: project ? `${server.name} · ${project.name}` : server.name,
+      remotePath: project?.remote_path ?? "/",
+      localPath: "",
+    });
+    setView("tabs");
+  }
+
   async function handleOpen(server: ServerSummary, project?: Project) {
     const key = `${server.id}:${project?.id ?? ""}`;
     // Ignore repeat clicks while this exact connection is in flight.
     if (connecting.has(key)) return;
     setConnecting((prev) => new Set(prev).add(key));
     try {
-      const summary = await api.openSession(server.id, project?.id);
-      openTab({
-        session: summary,
-        label: project ? `${server.name} · ${project.name}` : server.name,
-        remotePath: project?.remote_path ?? "/",
-        localPath: "",
-      });
-      setView("tabs");
+      await doOpen(server, project);
     } catch (e) {
-      toast.error(`Open session failed: ${e}`);
+      const msg = `${e}`;
+      // Host key changed — instead of a dead-end error, let the user review
+      // the old vs new fingerprint and accept it (re-pin + reconnect).
+      const m = msg.match(/host key mismatch.*expected (.+?), got (.+)$/);
+      if (m) {
+        const [, expected, actual] = m;
+        const ok = await confirm({
+          title: "Host key has changed",
+          danger: true,
+          confirmText: "Accept new key",
+          description: (
+            <div className="space-y-2">
+              <div>
+                The host key for <span className="font-medium">{server.name}</span>{" "}
+                does not match the one pinned earlier. This can happen after a
+                server rebuild — or it could indicate a man-in-the-middle attack.
+                Only accept if you recognize the change.
+              </div>
+              <div className="space-y-1 font-mono text-xs">
+                <div className="break-all">
+                  <span className="text-muted-foreground">Pinned:&nbsp;</span>
+                  {expected}
+                </div>
+                <div className="break-all">
+                  <span className="text-muted-foreground">New:&nbsp;&nbsp;&nbsp;</span>
+                  {actual}
+                </div>
+              </div>
+            </div>
+          ),
+        });
+        if (ok) {
+          try {
+            await api.trustHostKey(server.id, actual);
+            await doOpen(server, project);
+          } catch (e2) {
+            toast.error(`Open session failed: ${e2}`);
+          }
+        }
+      } else {
+        toast.error(`Open session failed: ${msg}`);
+      }
     } finally {
       setConnecting((prev) => {
         const next = new Set(prev);
@@ -354,7 +401,18 @@ export function Sidebar() {
   async function handleDuplicateServer(s: ServerSummary) {
     try {
       const full = await api.getServer(s.id);
-      setCopyingServer({ ...full, id: NIL_UUID, name: `${full.name} (copy)` });
+      // Drop the pinned host-key fingerprint(s) — the copy may point at a
+      // different host, so it must re-pin on first connect rather than
+      // inherit (and reject against) the original's key.
+      setCopyingServer({
+        ...full,
+        id: NIL_UUID,
+        name: `${full.name} (copy)`,
+        host_key_fingerprint: null,
+        jump_host: full.jump_host
+          ? { ...full.jump_host, host_key_fingerprint: null }
+          : full.jump_host,
+      });
     } catch (e) {
       toast.error(`${e}`);
     }

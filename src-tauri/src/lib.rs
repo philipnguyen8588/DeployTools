@@ -87,6 +87,7 @@ pub fn run() {
             commands::server::delete_server,
             commands::server::test_connection,
             commands::server::test_connection_config,
+            commands::server::trust_host_key,
             commands::server::reorder_servers,
             // Server groups (sidebar organisation)
             commands::groups::list_groups,

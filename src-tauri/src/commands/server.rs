@@ -154,3 +154,29 @@ pub async fn test_connection(id: Uuid, state: State<'_, AppState>) -> AppResult<
         }
     }
 }
+
+/// Re-pin a server's host-key fingerprint. Called from the UI after the
+/// user reviews and accepts a changed host key (the connect flow returns
+/// `HostKeyMismatch` instead of silently trusting the new key). The next
+/// connect then matches and succeeds.
+#[tauri::command]
+pub async fn trust_host_key(
+    id: Uuid,
+    fingerprint: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let mut found = false;
+    state
+        .vault
+        .write(|data| {
+            if let Some(s) = data.servers.iter_mut().find(|s| s.id == id) {
+                s.host_key_fingerprint = Some(fingerprint.clone());
+                found = true;
+            }
+        })
+        .await?;
+    if !found {
+        return Err(AppError::ServerNotFound(id.to_string()));
+    }
+    Ok(())
+}

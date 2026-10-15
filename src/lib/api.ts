@@ -57,6 +57,9 @@ export const testConnection = (id: UUID) =>
   invoke<string>("test_connection", { id });
 export const testConnectionConfig = (server: Server) =>
   invoke<string>("test_connection_config", { server });
+/** Re-pin a server's host key after the user accepts a changed fingerprint. */
+export const trustHostKey = (id: UUID, fingerprint: string) =>
+  invoke<void>("trust_host_key", { id, fingerprint });
 /** Drag-drop reorder. Called once per affected group after a drop. */
 export const reorderServers = (groupId: UUID | null, ids: UUID[]) =>
   invoke<void>("reorder_servers", { groupId, ids });
