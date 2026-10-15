@@ -86,27 +86,58 @@ pub struct RemoteEntry {
 /// locking contention across concurrent file operations.
 pub async fn open_sftp(session: &SshSession) -> AppResult<Arc<Mutex<SftpSession>>> {
     ensure_sftp_available(session)?;
-    let mut handle = session.handle.lock().await;
-    let channel = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| AppError::Ssh(format!("sftp channel: {e}")))?;
-    // Bound the subsystem request: a rejection here means the server has no
-    // SFTP subsystem at all.
-    match tokio::time::timeout(SFTP_INIT_TIMEOUT, channel.request_subsystem(true, "sftp")).await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(mark_sftp_unavailable(session, format!("subsystem rejected: {e}"))),
-        Err(_) => return Err(mark_sftp_unavailable(session, "subsystem request timed out")),
-    }
-    drop(handle);
-    // Bound the SFTP handshake. On timeout the future is dropped, which drops
-    // the partially-built session and tears down russh-sftp's spawned tasks.
+    let channel = open_sftp_channel(session).await?;
+    // Only reached once the subsystem is confirmed started, so building the
+    // SFTP stream here is safe. Still bound the handshake in case the server
+    // starts the subsystem but never speaks SFTP.
     let sftp = match tokio::time::timeout(SFTP_INIT_TIMEOUT, SftpSession::new(channel.into_stream())).await {
         Ok(Ok(sftp)) => sftp,
         Ok(Err(e)) => return Err(mark_sftp_unavailable(session, format!("init failed: {e}"))),
         Err(_) => return Err(mark_sftp_unavailable(session, "init timed out")),
     };
     Ok(Arc::new(Mutex::new(sftp)))
+}
+
+/// Open a channel and start the `sftp` subsystem, waiting for the server's
+/// reply BEFORE the caller builds an SFTP stream on it.
+///
+/// `request_subsystem(true, ..)` only sends the request — it does NOT await
+/// the reply. On servers without SFTP (e.g. Home Assistant's SSH add-on) the
+/// server answers `SSH_MSG_CHANNEL_FAILURE`; if we hand such a channel to
+/// `into_stream()` + `SftpSession`, russh's `ChannelStream` busy-loops on the
+/// failure message and pegs two CPU cores for the life of the connection —
+/// and the spinning tasks are detached, so dropping the session does NOT stop
+/// them. So we consume the reply with `wait()` (which does not spin) and only
+/// return the channel when the subsystem actually started.
+async fn open_sftp_channel(
+    session: &SshSession,
+) -> AppResult<russh::Channel<russh::client::Msg>> {
+    let handle = session.handle.lock().await;
+    let mut channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| AppError::Ssh(format!("sftp channel: {e}")))?;
+    drop(handle);
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| AppError::Ssh(format!("request sftp: {e}")))?;
+    match tokio::time::timeout(SFTP_INIT_TIMEOUT, channel.wait()).await {
+        Ok(Some(russh::ChannelMsg::Success)) => Ok(channel),
+        Ok(Some(russh::ChannelMsg::Failure)) => {
+            let _ = channel.close().await;
+            Err(mark_sftp_unavailable(session, "subsystem rejected"))
+        }
+        Ok(Some(_)) => {
+            let _ = channel.close().await;
+            Err(mark_sftp_unavailable(session, "unexpected subsystem reply"))
+        }
+        Ok(None) => Err(mark_sftp_unavailable(session, "channel closed")),
+        Err(_) => {
+            let _ = channel.close().await;
+            Err(mark_sftp_unavailable(session, "subsystem request timed out"))
+        }
+    }
 }
 
 /// Fast-fail if this session has already been flagged as lacking SFTP, so
@@ -322,17 +353,7 @@ pub async fn rename(session: &SshSession, from: &str, to: &str) -> AppResult<()>
 /// one WRITE at a time and awaits its ACK — the slow path).
 async fn open_raw_sftp(session: &SshSession) -> AppResult<RawSftpSession> {
     ensure_sftp_available(session)?;
-    let handle = session.handle.lock().await;
-    let channel = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| AppError::Ssh(format!("sftp channel: {e}")))?;
-    match tokio::time::timeout(SFTP_INIT_TIMEOUT, channel.request_subsystem(true, "sftp")).await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(mark_sftp_unavailable(session, format!("subsystem rejected: {e}"))),
-        Err(_) => return Err(mark_sftp_unavailable(session, "subsystem request timed out")),
-    }
-    drop(handle);
+    let channel = open_sftp_channel(session).await?;
     let raw = RawSftpSession::new(channel.into_stream());
     match tokio::time::timeout(SFTP_INIT_TIMEOUT, raw.init()).await {
         Ok(Ok(_)) => {}
